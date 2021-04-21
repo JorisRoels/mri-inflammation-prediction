@@ -437,6 +437,9 @@ def main():
                 # save proper checkpoint with eval metric
                 best_metric, best_epoch = saver.save_checkpoint(epoch=epoch, metric=eval_metrics[eval_metric])
 
+        # move best model checkpoint to the root directory
+        os.rename(os.path.join(output_dir, 'model_best.pth.tar'), 'efficientdet-model.ckpt')
+
     except KeyboardInterrupt:
         pass
     if best_metric is not None:
