@@ -2,6 +2,9 @@
 This file contains all constant values required in the repository.
 '''
 
+import numpy as np
+
+
 # name of the CSV file containing the annotations
 SCORES_FILE = 'scores-corrected.csv'
 # suffix for the filtered data and merge directory name
@@ -65,3 +68,12 @@ T1_OPTIONS = {BEGIANT: ['t1_se_cor'],
 T2_OPTIONS = {BEGIANT: ['t2_tirm_cor_320_3mm_pat2'],
               HEALTHY_CONTROLS: ['t2_tse_stir_cor_p2'],
               POPAS: ['t2_tirm_cor_320_3mm_pat2']}
+
+T1_CLIPLIMIT = 200
+T2_CLIPLIMIT = 400
+
+i_ref = {T1: 5, T2: 5}
+j_ref = {T1: 3, T2: 3}
+Q_ALPHA = {T1: 70 / 180 * np.pi, T2: 70 / 180 * np.pi}
+
+PADDING = 50

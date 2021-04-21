@@ -53,8 +53,8 @@ python test/efficientdet.py --data-dir $DATA_PATH/data/merged --model-checkpoint
 ### Illium & sacrum segmentation
 Segmentation of the illium and sacrum is performed by training a [U-Net](https://lmb.informatik.uni-freiburg.de/people/ronneber/u-net/) on noisy labels, obtained by the Carving workflow in [ilastik](https://www.ilastik.org/). 
 ```bash
-python train/unet.py --data $DATA_PATH/data/carving/data --labels $DATA_PATH/data/carving/labels_illium
-python train/unet.py --data $DATA_PATH/data/carving/data --labels $DATA_PATH/data/carving/labels_sacrum
+python train/unet.py --data $DATA_PATH/data/carving/data --labels $DATA_PATH/data/carving/labels_illium --mode illium
+python train/unet.py --data $DATA_PATH/data/carving/data --labels $DATA_PATH/data/carving/labels_sacrum --mode sacrum
 ```
 
 You can then test the trained model by running: 

@@ -2,7 +2,6 @@ neuralnets
 torch>=1.4.0
 timm>=0.3.2
 torchvision
-pyyaml
 numpy
 tqdm
 # an update version that fixes some bugs, incl issues with numpy >= 1.18
