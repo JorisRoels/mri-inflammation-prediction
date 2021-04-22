@@ -120,17 +120,17 @@ parser.add_argument('--warmup-lr', type=float, default=0.0001, metavar='LR',
                     help='warmup learning rate (default: 0.0001)')
 parser.add_argument('--min-lr', type=float, default=1e-5, metavar='LR',
                     help='lower lr bound for cyclic schedulers that hit 0 (1e-5)')
-parser.add_argument('--epochs', type=int, default=1200, metavar='N',
-                    help='number of epochs to train (default: 1200)')
+parser.add_argument('--epochs', type=int, default=2000, metavar='N',
+                    help='number of epochs to train (default: 2000)')
 parser.add_argument('--start-epoch', default=None, type=int, metavar='N',
                     help='manual epoch number (useful on restarts)')
 parser.add_argument('--decay-epochs', type=float, default=30, metavar='N',
                     help='epoch interval to decay LR')
-parser.add_argument('--warmup-epochs', type=int, default=5, metavar='N',
+parser.add_argument('--warmup-epochs', type=int, default=0, metavar='N',
                     help='epochs to warmup LR, if scheduler supports')
 parser.add_argument('--cooldown-epochs', type=int, default=10, metavar='N',
                     help='epochs to cooldown LR at min_lr, after cyclic schedule ends')
-parser.add_argument('--patience-epochs', type=int, default=10, metavar='N',
+parser.add_argument('--patience-epochs', type=int, default=0, metavar='N',
                     help='patience epochs for Plateau LR scheduler (default: 10')
 parser.add_argument('--decay-rate', '--dr', type=float, default=0.1, metavar='RATE',
                     help='LR decay rate (default: 0.1)')
@@ -372,7 +372,7 @@ def main():
     if args.local_rank == 0:
         logging.info('Scheduled epochs: {}'.format(num_epochs))
 
-    loader_train, loader_eval, evaluator = create_datasets_and_loaders(args, model_config)
+    loader_train, loader_eval, loader_test, evaluator, evaluator_test = create_datasets_and_loaders(args, model_config)
 
     if model_config.num_classes < loader_train.dataset.parser.max_label:
         logging.error(
@@ -437,6 +437,10 @@ def main():
                 # save proper checkpoint with eval metric
                 best_metric, best_epoch = saver.save_checkpoint(epoch=epoch, metric=eval_metrics[eval_metric])
 
+        # measure test performance
+        eval_metrics = validate(model, loader_test, args, evaluator_test)
+        print('TEST set performance: %.2f mAP' % (eval_metrics[eval_metric] * 100))
+
         # move best model checkpoint to the root directory
         os.rename(os.path.join(output_dir, 'model_best.pth.tar'), 'efficientdet-model.ckpt')
 
@@ -467,7 +471,7 @@ def create_datasets_and_loaders(
     """
     input_config = resolve_input_config(args, model_config=model_config)
 
-    dataset_train, dataset_eval = create_dataset(args.dataset, args.root)
+    dataset_train, dataset_eval, dataset_test = create_dataset(args.dataset, args.root, splits=('train', 'val', 'test'))
 
     # setup labeler in loader/collate_fn if not enabled in the model bench
     labeler = None
@@ -518,9 +522,28 @@ def create_datasets_and_loaders(
         collate_fn=collate_fn,
     )
 
-    evaluator = create_evaluator(args.dataset, loader_eval.dataset, distributed=args.distributed, pred_yxyx=False)
+    loader_test = create_loader(
+        dataset_test,
+        input_size=input_config['input_size'],
+        batch_size=args.batch_size,
+        is_training=False,
+        use_prefetcher=args.prefetcher,
+        interpolation=input_config['interpolation'],
+        fill_color=input_config['fill_color'],
+        mean=input_config['mean'],
+        std=input_config['std'],
+        num_workers=args.workers,
+        distributed=args.distributed,
+        pin_mem=args.pin_mem,
+        anchor_labeler=labeler,
+        transform_fn=transform_eval_fn,
+        collate_fn=collate_fn,
+    )
 
-    return loader_train, loader_eval, evaluator
+    evaluator = create_evaluator(args.dataset, loader_eval.dataset, distributed=args.distributed, pred_yxyx=False)
+    evaluator_test = create_evaluator(args.dataset, loader_test.dataset, distributed=args.distributed, pred_yxyx=False)
+
+    return loader_train, loader_eval, loader_test, evaluator, evaluator_test
 
 
 def train_epoch(
