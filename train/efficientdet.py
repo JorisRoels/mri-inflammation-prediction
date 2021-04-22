@@ -44,6 +44,8 @@ from timm.utils import *
 from timm.optim import create_optimizer
 from timm.scheduler import create_scheduler
 
+from util.constants import *
+
 torch.backends.cudnn.benchmark = True
 
 
@@ -492,8 +494,8 @@ def create_datasets_and_loaders(
         # auto_augment=args.aa,
         interpolation=args.train_interpolation or input_config['interpolation'],
         fill_color=input_config['fill_color'],
-        mean=input_config['mean'],
-        std=input_config['std'],
+        mean=(X_MU, X_MU, X_MU),
+        std=(X_STD, X_STD, X_STD),
         num_workers=args.workers,
         distributed=args.distributed,
         pin_mem=args.pin_mem,
@@ -512,8 +514,8 @@ def create_datasets_and_loaders(
         use_prefetcher=args.prefetcher,
         interpolation=input_config['interpolation'],
         fill_color=input_config['fill_color'],
-        mean=input_config['mean'],
-        std=input_config['std'],
+        mean=(X_MU, X_MU, X_MU),
+        std=(X_STD, X_STD, X_STD),
         num_workers=args.workers,
         distributed=args.distributed,
         pin_mem=args.pin_mem,
@@ -530,8 +532,8 @@ def create_datasets_and_loaders(
         use_prefetcher=args.prefetcher,
         interpolation=input_config['interpolation'],
         fill_color=input_config['fill_color'],
-        mean=input_config['mean'],
-        std=input_config['std'],
+        mean=(X_MU, X_MU, X_MU),
+        std=(X_STD, X_STD, X_STD),
         num_workers=args.workers,
         distributed=args.distributed,
         pin_mem=args.pin_mem,

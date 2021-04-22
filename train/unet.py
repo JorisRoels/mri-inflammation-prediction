@@ -86,18 +86,13 @@ if __name__ == '__main__':
                          CleanDeformedLabels(args.coi)])
     train = StronglyLabeledVolumesDataset(args.data, args.labels, input_shape=input_shape,
                                           type=args.type, batch_size=args.train_batch_size,
-                                          transform=transform, range_split=(0, split[0]),
+                                          transform=transform, range_split=(0, split[1]),
                                           range_dir=args.split_orientation)
-    val = StronglyLabeledVolumesDataset(args.data, args.labels, input_shape=input_shape, type=args.type,
-                                        batch_size=args.test_batch_size, range_split=(split[0], split[1]),
-                                        range_dir=args.split_orientation)
     test = StronglyLabeledVolumesDataset(args.data, args.labels, input_shape=input_shape, type=args.type,
                                          batch_size=args.test_batch_size, range_split=(split[1], 1),
                                          range_dir=args.split_orientation)
     train_loader = DataLoader(train, batch_size=args.train_batch_size, num_workers=args.num_workers,
                               pin_memory=True)
-    val_loader = DataLoader(val, batch_size=args.test_batch_size, num_workers=args.num_workers,
-                            pin_memory=True)
     test_loader = DataLoader(test, batch_size=args.test_batch_size, num_workers=args.num_workers,
                              pin_memory=True)
 
@@ -119,7 +114,7 @@ if __name__ == '__main__':
                          default_root_dir=args.log_dir, flush_logs_every_n_steps=args.log_freq,
                          log_every_n_steps=args.log_freq, progress_bar_refresh_rate=args.log_refresh_rate,
                          callbacks=[checkpoint_callback])
-    trainer.fit(net, train_loader, val_loader)
+    trainer.fit(net, train_loader, test_loader)
 
     """
         Testing the network

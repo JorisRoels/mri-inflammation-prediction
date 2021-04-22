@@ -4,19 +4,20 @@
 Hacked together by Ross Wightman (https://github.com/rwightman)
 """
 import argparse
-import time
 import torch
 import torch.nn.parallel
 from contextlib import suppress
 import cv2
 import matplotlib.pyplot as plt
 import os
-import numpy as np
 
-from effdet import create_model, create_evaluator, create_dataset, create_loader
-from effdet.data import resolve_input_config
-from timm.utils import AverageMeter, setup_default_logging
+from effdet import create_model
+from timm.utils import setup_default_logging
 from timm.models.layers import set_layer_config
+from neuralnets.util.tools import normalize
+
+from util.constants import *
+from util.tools import load
 
 has_apex = False
 try:
@@ -44,11 +45,7 @@ def add_bool_arg(parser, name, default=False, help=''):  # FIXME move to utils
 
 
 parser = argparse.ArgumentParser(description='PyTorch ImageNet Validation')
-parser.add_argument('--annotations', required=True, type=str, help='Path to the annotated dataset')
-parser.add_argument('--dataset', default='coco', type=str, metavar='DATASET',
-                    help='Name of dataset (default: "coco"')
-parser.add_argument('--split', default='test',
-                    help='validation split')
+parser.add_argument("--data-dir", help="Path to the directory that contains a preprocessed dataset", type=str, required=True)
 parser.add_argument('--model', default='tf_efficientdet_d0_mri', type=str, metavar='MODEL',
                     help='Name of model to train (default: "tf_efficientdet_d0_mri"')
 add_bool_arg(parser, 'redundant-bias', default=None,
@@ -56,7 +53,7 @@ add_bool_arg(parser, 'redundant-bias', default=None,
 add_bool_arg(parser, 'soft-nms', default=None, help='override model config for soft-nms')
 parser.add_argument('--num-classes', type=int, default=1, metavar='N',
                     help='Override num_classes in model config if set. For fine-tuning from pretrained.')
-parser.add_argument('-j', '--workers', default=4, type=int, metavar='N',
+parser.add_argument('-j', '--workers', default=0, type=int, metavar='N',
                     help='number of data loading workers (default: 4)')
 parser.add_argument('-b', '--batch-size', default=4, type=int,
                     metavar='N', help='mini-batch size (default: 4)')
@@ -109,11 +106,7 @@ thickness = 2
 def draw_bbox(img, bbox_pred, bbox_target=None):
 
     def _draw_box(img, box, color, text=None, font=None, fontScale=None, thickness=None):
-        x, y, w, h = box[:4]
-        x_ = int(x + w)
-        y_ = int(y + h)
-        x = int(x)
-        y = int(y)
+        x, y, x_, y_ = box[:4].astype(int)
         img = cv2.rectangle(img, (x, y), (x_, y_), color, thickness)
 
         if text is not None:
@@ -141,7 +134,6 @@ def draw_bbox(img, bbox_pred, bbox_target=None):
 def validate(args):
     setup_default_logging()
 
-    args.root = args.annotations
     args.checkpoint = args.model_checkpoint
 
     if args.amp:
@@ -165,7 +157,6 @@ def validate(args):
             checkpoint_path=args.checkpoint,
             checkpoint_ema=args.use_ema,
         )
-    model_config = bench.config
 
     param_count = sum([m.numel() for m in bench.parameters()])
     print('Model %s created, param count: %d' % (args.model, param_count))
@@ -185,73 +176,35 @@ def validate(args):
     if args.num_gpu > 1:
         bench = torch.nn.DataParallel(bench, device_ids=list(range(args.num_gpu)))
 
-    dataset = create_dataset(args.dataset, args.root, args.split)
-    input_config = resolve_input_config(args, model_config)
-    loader = create_loader(
-        dataset,
-        input_size=input_config['input_size'],
-        batch_size=args.batch_size,
-        use_prefetcher=args.prefetcher,
-        interpolation=input_config['interpolation'],
-        fill_color=input_config['fill_color'],
-        mean=input_config['mean'],
-        std=input_config['std'],
-        num_workers=args.workers,
-        pin_mem=args.pin_mem)
+    t1_data = load(os.path.join(args.data_dir, T1_PP_FILE))
 
-    evaluator = create_evaluator(args.dataset, dataset, pred_yxyx=False)
     bench.eval()
-    batch_time = AverageMeter()
-    end = time.time()
-    last_idx = len(loader) - 1
-    imgs = []
     with torch.no_grad():
-        for i, (input, target) in enumerate(loader):
-            for b in range(input.shape[0]):
-                imgs.append(input[b].cpu().numpy())
-                # targets.append(target[b].cpu().numpy())
+        i = np.random.randint(len(t1_data))
+        s = np.random.randint(len(t1_data[i]))
+        x = t1_data[i][s]
+        clahe = cv2.createCLAHE(clipLimit=T1_CLIPLIMIT)
+        x = normalize(x.astype(float), type='minmax')
+        x = clahe.apply((x * (2 ** 16 - 1)).astype('uint16')) / (2 ** 16 - 1)
+        x = (x - X_MU) / X_STD
+        input = torch.from_numpy(np.repeat(x[np.newaxis, np.newaxis, ...], 3, axis=1)).cuda()
 
-            with amp_autocast():
-                output = bench(input, img_info=target)
-            evaluator.add_predictions(output, target)
+        with amp_autocast():
+            output = bench(input.float())[0].cpu().numpy()
 
-            # measure elapsed time
-            batch_time.update(time.time() - end)
-            end = time.time()
-
-            if i % args.log_freq == 0 or i == last_idx:
-                print(
-                    'Test: [{0:>4d}/{1}]  '
-                    'Time: {batch_time.val:.3f}s ({batch_time.avg:.3f}s, {rate_avg:>7.2f}/s)  '
-                    .format(
-                        i, len(loader), batch_time=batch_time,
-                        rate_avg=input.size(0) / batch_time.avg)
-                )
-
-    preds = [p[:2, :] for p in evaluator.predictions]
-    anns = evaluator.coco_api.imgToAnns
-    targets = [np.asarray((anns[k][0]['bbox'], anns[k][1]['bbox'])) for k in range(len(imgs))]
-    mean_ap = evaluator.evaluate()
-    print('mAP (val set): %.2f' % (100 * mean_ap))
-    if not os.path.exists(args.out_dir):
-        os.mkdir(args.out_dir)
-    i = np.random.randint(len(imgs))
-    # for i, img in enumerate(imgs):
-    img = imgs[i]
-    img_m = np.mean(img, axis=0)
+    pred = output[:2, :]
+    img = np.zeros((3, x.shape[0], x.shape[1]))
     for c in range(3):
-        img[c] = img_m
+        img[c] = x
     img_ = img.transpose(1, 2, 0)
     m = img_.min()
     M = img_.max()
     img_ = ((img_ - m) / (M - m) * 255).astype('uint8').copy()
-    img_ = draw_bbox(img_, preds[i], targets[i])
+    img_ = draw_bbox(img_, pred)
     plt.imshow(img_)
     plt.axis('off')
     plt.show()
     # cv2.imwrite(os.path.join(args.out_dir, '%d.jpg' % i), img_)
-
-    return mean_ap
 
 
 def main():
