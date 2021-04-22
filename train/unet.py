@@ -63,7 +63,7 @@ if __name__ == '__main__':
     # logging parameters
     parser.add_argument("--log_dir", help="Logging directory", type=str, default='logs')
     parser.add_argument("--log_freq", help="Frequency to log results", type=int, default=50)
-    parser.add_argument("--log_refresh_rate", help="Refresh rate for logging", type=int, default=1)
+    parser.add_argument("--log_refresh_rate", help="Refresh rate for logging", type=int, default=-1)
     parser.add_argument("--seed", help="Seed for reproducibility", type=int, default=0)
     
     args = parser.parse_args()
