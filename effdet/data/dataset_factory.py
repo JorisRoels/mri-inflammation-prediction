@@ -28,6 +28,7 @@ def create_dataset(name, root, splits=('train', 'val')):
             if s not in dataset_cfg.splits:
                 raise RuntimeError(f'{s} split not found in config')
             split_cfg = dataset_cfg.splits[s]
+            split_cfg['has_labels'] = True
             ann_file = root / split_cfg['ann_filename']
             parser_cfg = CocoParserCfg(
                 ann_filename=ann_file,
