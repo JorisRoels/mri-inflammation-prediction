@@ -203,6 +203,8 @@ class SPARCC_CNN(pl.LightningModule):
         # set training mode
         self.set_training_mode(JOINT)
 
+        self.on_epoch_start()
+
     def forward(self, x, mode=JOINT):
 
         return self.model(x, mode=mode)
