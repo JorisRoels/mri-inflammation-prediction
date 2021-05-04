@@ -3,6 +3,7 @@ This file contains all constant values required in the repository.
 '''
 
 import numpy as np
+import torchvision.models as models
 
 
 # name of the CSV file containing the annotations
@@ -82,3 +83,59 @@ PADDING = 50
 X_MU = 0.456
 # X_STD = 0.2466064368858386
 X_STD = 0.225
+
+FM = 16
+LEVELS = 4
+NORM = 'batch'
+ACTIVATION = 'relu'
+COI = (0, 1)
+
+N_SLICES = 6
+N_SIDES = 2
+N_QUARTILES = 4
+
+Q_L = 64
+Q_D = 10
+
+CACHE_DIR = '/home/jorisro/.cache/mri'
+SI_JOINTS_TMP = 'si_joints'
+SEG_I_TMP = 'seg_i'
+SEG_S_TMP = 'seg_s'
+Q_TMP = 'quartiles'
+W_TMP = 'weights'
+EXT = 'npy'
+
+ALPHA = 0.75
+
+# network parameters
+CONV_CHANNELS = [16, 32, 64, 128, 256]
+FC_CHANNELS_INFLAMMATION = [64, 16, 2]
+FC_CHANNELS_DEEP_INFLAMMATION = [64, 16, 2]
+FC_CHANNELS_INTENSE_INFLAMMATION = [64, 16, 2]
+KERNEL_SIZE = 3
+CNN_NORM = 'batch'
+CNN_ACTIVATION = 'relu'
+
+# supported backbones
+BACKBONES = {'AlexNet': models.alexnet,
+             'VGG11': models.vgg11_bn,
+             'VGG16': models.vgg16_bn,
+             'ResNet18': models.resnet18,
+             'ResNet101': models.resnet101,
+             'ResNeXt101': models.resnext101_32x8d,
+             'DenseNet121': models.densenet121,
+             'DenseNet201': models.densenet201}
+
+w_pos_inflamm = 0.08165708812260536
+w_neg_inflamm = 1 - w_pos_inflamm
+INFLAMMATION_WEIGHTS = [1 / w_neg_inflamm, 1 / w_pos_inflamm]
+
+w_pos_intense_inflamm = 0.035759897828863345
+w_neg_intense_inflamm = 1 - w_pos_inflamm
+INTENSE_INFLAMMATION_WEIGHTS = [1 / w_neg_intense_inflamm, 1 / w_pos_intense_inflamm]
+
+INFLAMMATION_MODULE = 'inflammation-module'
+INTENSE_INFLAMMATION_MODULE = 'intense-inflammation-module'
+JOINT = 'joint'
+
+BINS = 50

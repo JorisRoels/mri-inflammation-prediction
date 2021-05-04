@@ -65,6 +65,6 @@ python test/unet.py --data-dir $DATA_PATH/data/merged --model-checkpoint-illium 
 ### Inflammation prediction
 The inflammation predictor can be trained by providing it with an EfficientDet SI joint detector and an illium and sacrum segmentation U-Net: 
 ```bash
-python train/classifier.py --data-dir $DATA_PATH/data/merged --si-joint-model train/logs/efficientdet/final-model.ckpt --illium-model train/logs/unet/illium/final-model.ckpt --sacrum-model train/logs/unet/sacrum/final-model.ckpt
+python train/classifier.py --data-dir $DATA_PATH/data/merged --si-joint-model train/logs/efficientdet/final-model.ckpt --model-checkpoint-illium train/logs/unet/illium/final-model.ckpt --model-checkpoint-sacrum train/logs/unet/sacrum/final-model.ckpt
 ```
 

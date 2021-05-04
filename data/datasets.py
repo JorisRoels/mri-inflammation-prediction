@@ -1,14 +1,680 @@
-
+import numpy as np
 import torch
 import torch.utils.data as data
 import os
 import cv2
+from tqdm import tqdm
 from neuralnets.util.tools import normalize, sample_labeled_input
-from neuralnets.util.io import print_frm, read_volume
+from neuralnets.util.io import print_frm, read_volume, mkdir
 from neuralnets.data.base import slice_subset, _len_epoch
 from neuralnets.data.datasets import split_segmentation_transforms
+from neuralnets.networks.unet import UNet2D
+
+from effdet import create_model
+from timm.models.layers import set_layer_config
 
 from util.constants import *
+from util.tools import load, delinearize_index
+
+
+class SPARCCDataset(data.Dataset):
+    """
+    Dataset that processes the UZ MRI data for inflammation prediction
+
+    :param data_path: path to the directory containing the merged (preprocessed) data, score and slicenumbers files
+    :param si_joint_model: model that is able to locate the SI joints
+    :param illum_model: model that is able to segment the illium
+    :param sacrum_model: model that is able to segment the sacrum
+    :param optional range_split: range of slices (start, stop) to select (normalized between 0 and 1)
+    :param optional transform: augmentation transformer
+    :param optional seed: seed to fix the shuffling
+    :param optional mode: training mode, influences the type of generated samples:
+                    - INFLAMMATION_MODULE: [CHANNELS, QUARTILE_SIZE, QUARTILE_SIZE]
+                    - INTENSE_INFLAMMATION_MODULE: [CHANNELS, N_QUARTILES, QUARTILE_SIZE, QUARTILE_SIZE]
+                    - JOINT: [CHANNELS, N_SLICES, N_SIDES, N_QUARTILES, QUARTILE_SIZE, QUARTILE_SIZE]
+    """
+
+    def __init__(self, data_path, si_joint_model, illum_model, sacrum_model, range_split=(0, 1),
+                 transform=None, seed=0, mode=JOINT):
+        self.data_path = data_path
+        self.si_joint_model = si_joint_model
+        self.illum_model = illum_model
+        self.sacrum_model = sacrum_model
+        self.range_split = range_split
+        self.transform = transform
+        self.seed = seed
+        self.mode = mode
+
+        # load all necessary files
+        self.scores = load(os.path.join(data_path, SCORES_PP_FILE))
+        self.slicenumbers = load(os.path.join(data_path, SLICENUMBERS_PP_FILE))
+        self.t1_data = load(os.path.join(data_path, T1_PP_FILE))
+        self.t2_data = load(os.path.join(data_path, T2_PP_FILE))
+
+        # shuffle the data
+        self._shuffle_data()
+
+        # select a subset of the data
+        start, stop = range_split
+        start = int(start * len(self.t1_data))
+        stop = int(stop * len(self.t1_data))
+        self.scores = tuple([scoreset[start:stop] for scoreset in self.scores])
+        self.slicenumbers = (self.slicenumbers[0][start:stop], self.slicenumbers[1][start:stop])
+        self.t1_data = self.t1_data[start:stop]
+        self.t2_data = self.t2_data[start:stop]
+
+        # extract slices
+        self.t1_slices = self._extract_slices(self.t1_data, self.slicenumbers[1])
+        self.t2_slices = self._extract_slices(self.t2_data, self.slicenumbers[0],
+                                              target_size=self.t1_slices[0].shape[1:])
+
+        # pre-compute SI joint locations and illium/sacrum segmentations
+        SI_JOINTS_TMP_FILE = os.path.join(CACHE_DIR, '%s_%d_%d.%s' % (SI_JOINTS_TMP, start, stop, EXT))
+        SEG_I_TMP_FILE = os.path.join(CACHE_DIR, '%s_%d_%d.%s' % (SEG_I_TMP, start, stop, EXT))
+        SEG_S_TMP_FILE = os.path.join(CACHE_DIR, '%s_%d_%d.%s' % (SEG_S_TMP, start, stop, EXT))
+        if not os.path.exists(SI_JOINTS_TMP_FILE) or \
+           not os.path.exists(SEG_I_TMP_FILE) or \
+           not os.path.exists(SEG_S_TMP_FILE):
+            t1_slices_clahe = self._compute_clahe(self.t1_slices, clip_limit=T1_CLIPLIMIT)
+        if os.path.exists(SI_JOINTS_TMP_FILE):
+            self.si_joints = np.load(SI_JOINTS_TMP_FILE)
+        else:
+            self.si_joints = self._compute_joints(t1_slices_clahe, self.si_joint_model, out_file=SI_JOINTS_TMP_FILE)
+        if os.path.exists(SEG_I_TMP_FILE):
+            self.illium = np.load(SEG_I_TMP_FILE)
+        else:
+            self.illium = self._compute_segmentation(t1_slices_clahe, self.illum_model, out_file=SEG_I_TMP_FILE)
+        if os.path.exists(SEG_S_TMP_FILE):
+            self.sacrum = np.load(SEG_S_TMP_FILE)
+        else:
+            self.sacrum = self._compute_segmentation(t1_slices_clahe, self.sacrum_model, out_file=SEG_S_TMP_FILE)
+
+        # extract quartiles and corresponding weight maps
+        Q_TMP_FILE = os.path.join(CACHE_DIR, '%s_%d_%d.%s' % (Q_TMP, start, stop, EXT))
+        W_TMP_FILE = os.path.join(CACHE_DIR, '%s_%d_%d.%s' % (W_TMP, start, stop, EXT))
+        if os.path.exists(Q_TMP_FILE) and os.path.exists(W_TMP_FILE):
+            self.quartiles = np.load(Q_TMP_FILE)
+            self.weights = np.load(W_TMP_FILE)
+        else:
+            self.quartiles, self.weights = self._extract_quartiles(self.t1_slices, self.t2_slices, self.si_joints,
+                                                                   self.illium, self.sacrum, Q_L, Q_D,
+                                                                   out_file=(Q_TMP_FILE, W_TMP_FILE))
+
+        # compute stats for z-normalization
+        self.mu = [self.quartiles[:, i, ...].mean() for i in range(self.quartiles.shape[1])]
+        self.mu.append(self.weights.mean())
+        self.std = [self.quartiles[:, i, ...].std() for i in range(self.quartiles.shape[1])]
+        self.std.append(self.weights.std())
+
+        # apply weighting
+        for c in range(self.quartiles.shape[1]):
+            self.quartiles[:, c, ...] = self.quartiles[:, c, ...] * self.weights
+
+        # extract scores
+        self.q_scores, self.s_scores_i, self.s_scores_d, self.sparcc = self._extract_scores(self.scores)
+
+    def __getitem__(self, i):
+        if self.mode == INFLAMMATION_MODULE:
+            j, k, l, m = delinearize_index(i, (len(self.quartiles), N_SLICES, N_SIDES, N_QUARTILES))
+            quartiles = self.quartiles[j, :, k, l, m, ...]
+            i_scores = self.q_scores[j, k, l, m, ...]
+        elif self.mode == INTENSE_INFLAMMATION_MODULE:
+            j, k, l = delinearize_index(i, (len(self.quartiles), N_SLICES, N_SIDES))
+            quartiles = self.quartiles[j, :, k, l, ...]
+            i_scores = self.q_scores[j, k, l, ...]
+            ii_scores = self.s_scores_i[j, k, l]
+        else:
+            quartiles = self.quartiles[i]
+            i_scores = self.q_scores[i]
+            ii_scores = self.s_scores_i[i]
+            di_scores = self.s_scores_d[i]
+            s_scores = self.sparcc[i]
+
+        # normalization
+        quartiles = normalize(quartiles, type='minmax')
+
+        # augmentation
+        if self.transform is not None:
+            qshape = quartiles.shape
+            q = qshape[-1]
+            quartiles = np.reshape(quartiles, (-1, q, q))
+            quartiles = self.transform(quartiles)
+            quartiles = np.reshape(quartiles, qshape)
+
+        if self.mode == INFLAMMATION_MODULE:
+            return quartiles, i_scores
+        elif self.mode == INTENSE_INFLAMMATION_MODULE:
+            return quartiles, i_scores, ii_scores
+        else:
+            return quartiles, i_scores, ii_scores, di_scores, s_scores
+
+    def __len__(self):
+        if self.mode == INFLAMMATION_MODULE:
+            return self.quartiles.shape[0] * self.quartiles.shape[2] * self.quartiles.shape[3] * self.quartiles.shape[4]
+        elif self.mode == INTENSE_INFLAMMATION_MODULE:
+            return self.quartiles.shape[0] * self.quartiles.shape[2] * self.quartiles.shape[3]
+        else:
+            return self.quartiles.shape[0]
+
+    def _shuffle_data(self):
+        np.random.seed(self.seed)
+        inds_shuffled = np.random.permutation(np.arange(len(self.t1_data)))
+        self.scores = tuple([[scoreset[i] for i in inds_shuffled] for scoreset in self.scores])
+        self.slicenumbers = ([self.slicenumbers[0][i] for i in inds_shuffled],
+                             [self.slicenumbers[1][i] for i in inds_shuffled])
+        self.t1_data = [self.t1_data[i] for i in inds_shuffled]
+        self.t2_data = [self.t2_data[i] for i in inds_shuffled]
+
+    def _extract_slices(self, data, slicenumbers, target_size=None):
+
+        # initialize slices
+        data_size = data[0].shape[1:]
+        if target_size is None:
+            slices = np.zeros((len(data), N_SLICES, data_size[0], data_size[1]), dtype='uint16')
+        else:
+            slices = np.zeros((len(data), N_SLICES, target_size[0], target_size[1]), dtype='uint16')
+
+        # extract slices
+        for i in range(len(data)):
+            for j in range(N_SLICES):
+                s = slicenumbers[i][j]
+                if target_size is None:
+                    slices[i, j, ...] = data[i][s]
+                else:
+                    # upsample to the target size
+                    slices[i, j, ...] = cv2.resize(data[i][s], dsize=target_size, interpolation=cv2.INTER_CUBIC)
+
+        return slices
+
+    def _compute_clahe(self, data, clip_limit=T1_CLIPLIMIT):
+
+        clahe = cv2.createCLAHE(clipLimit=clip_limit)
+        data = data.astype(float)
+        for i in range(data.shape[0]):
+            for j in range(data.shape[1]):
+                x = normalize(data[i, j, ...], type='minmax')
+                data[i, j, ...] = clahe.apply((x * (2 ** 16 - 1)).astype('uint16')) / (2 ** 16 - 1)
+
+        return data
+
+    def _filter_bboxes(self, bboxes, sz):
+
+        x_max, y_max = sz
+
+        left_bboxes = []
+        right_bboxes = []
+        for bbox in bboxes:
+            x, y, x_, y_ = bbox[:4]
+            if x > x_max // 2 and x_ < x_max and y >= 0 and y_ < y_max:
+                left_bboxes.append(bbox)
+            elif x < x_max // 2 and x_ >= 0 and y >= 0 and y_ < y_max:
+                right_bboxes.append(bbox)
+
+        return np.asarray(left_bboxes), np.asarray(right_bboxes)
+
+    def _maximize_bbox_score(self, bboxes):
+
+        scores = bboxes[:, 4]
+        i_max = np.argmax(scores)
+
+        return bboxes[i_max]
+
+    def _compute_joints(self, data, model, out_file=None):
+
+        # load the joint model
+        with set_layer_config(scriptable=False):
+            bench = create_model(
+                'tf_efficientdet_d0_mri',
+                bench_task='predict',
+                num_classes=1,
+                redundant_bias=None,
+                soft_nms=None,
+                checkpoint_path=model,
+            )
+        bench = bench.cuda()
+        amp_autocast = torch.cuda.amp.autocast
+        bench.eval()
+
+        # forward propagation
+        bboxes = np.zeros((data.shape[0], N_SLICES, 2, 4))
+        with torch.no_grad():
+            for i in tqdm(range(data.shape[0]), desc='Computing SI joint locations'):
+                x = data[i]
+                x = (x - X_MU) / X_STD
+                input = torch.from_numpy(np.repeat(x[:, np.newaxis, ...], 3, axis=1)).cuda()
+                with amp_autocast():
+                    output = bench(input.float()).cpu().numpy()
+                for j in range(N_SLICES):
+                    bb_l, bb_r = self._filter_bboxes(output[j], x.shape[1:])
+                    bboxes[i, j, 0] = self._maximize_bbox_score(bb_l)[:4]
+                    bboxes[i, j, 1] = self._maximize_bbox_score(bb_r)[:4]
+
+        # save to tmp dir if necessary
+        if out_file is not None:
+            mkdir(os.path.dirname(out_file))
+            np.save(out_file, bboxes)
+
+        return bboxes
+
+    def _compute_segmentation(self, data, model, out_file=None):
+
+        # load the segmentation model
+        net = UNet2D(feature_maps=FM, levels=LEVELS, norm=NORM, activation=ACTIVATION, coi=COI)
+        net.load_state_dict(torch.load(model))
+        net = net.cuda().eval()
+
+        # forward propagation
+        segmentation = np.zeros_like(data)
+        with torch.no_grad():
+            for i in tqdm(range(data.shape[0]), desc='Computing segmentation'):
+                x = data[i]
+                input = torch.from_numpy(x[:, np.newaxis, ...]).cuda()
+                output = torch.softmax(net(input.float()), dim=1).cpu().numpy()
+                segmentation[i, ...] = output[:, 1, ...]
+
+        # save to tmp dir if necessary
+        if out_file is not None:
+            mkdir(os.path.dirname(out_file))
+            np.save(out_file, segmentation)
+
+        return segmentation
+
+    def _compute_weights(self, s):
+        # s_exp = W_0 * np.exp(W_S * s)
+        # z = np.sum(s_exp)
+        s_exp = s
+        z = 1
+        return s_exp / z
+
+    def _synced_extraction(self, x_1, x_2, bbox, p_i, p_s, q_l, q_d, s):
+
+        # bounding box coordinates
+        i_ul, j_ul, i_br, j_br = bbox
+
+        # joint location
+        i_j = int((i_ul + i_br) // 2)
+        j_j = int((j_ul + j_br) // 2)
+
+        # joint angle
+        alpha_j = np.arctan((i_br - i_ul) / (j_br - j_ul))
+
+        # rotate image to fix joint region
+        sgn = 1 if s == 0 else -1
+        R = cv2.getRotationMatrix2D((i_j, j_j), (sgn * alpha_j) / np.pi * 180, 1)
+        x_1_r = cv2.warpAffine(x_1, R, x_1.shape)
+        x_2_r = cv2.warpAffine(x_2, R, x_2.shape)
+        p_i_r = cv2.warpAffine(p_i, R, p_i.shape)
+        p_s_r = cv2.warpAffine(p_s, R, p_s.shape)
+        x_r = np.stack((x_1_r, x_2_r, p_i_r, p_s_r))
+
+        # extract patches
+        p = q_l + 2 * q_d
+        if s == 0:
+            ds = ((1, -1), (-1, -1), (-1, 1), (1, 1))
+        else:
+            ds = ((-1, -1), (1, -1), (1, 1), (-1, 1))
+        q_ = np.zeros((x_r.shape[0], N_QUARTILES, p, p))
+        for k, (di, dj) in enumerate(ds):
+            i0, i1 = i_j-di*q_d, i_j+di*(q_l+q_d)
+            j0, j1 = j_j-dj*q_d, j_j+dj*(q_l+q_d)
+            i_start, i_stop = min(i0, i1), max(i0, i1)
+            j_start, j_stop = min(j0, j1), max(j0, j1)
+            q_[:, k, ...] = x_r[:, j_start:j_stop, i_start:i_stop]
+        q = q_[:2, ...].astype('uint16')
+        s = q_[2, ...]
+        s[1:3] = q_[3, 1:3, ...]
+
+        # compute normalized weights from segmentation
+        w = self._compute_weights(s)
+
+        return q, w
+
+    def _extract_quartiles(self, t1_slices, t2_slices, si_joints, illium, sacrum, q_l, q_d, out_file=None):
+
+        # allocate space for quartiles and corresponding weight maps
+        n = len(t1_slices)
+        p = q_l + 2 * q_d
+        quartiles = np.zeros((n, 2, N_SLICES, N_SIDES, N_QUARTILES, p, p), dtype='uint16')
+        weights = np.zeros((n, N_SLICES, N_SIDES, N_QUARTILES, p, p))
+
+        # extract quartiles and weight maps
+        for i in range(n):
+            for j in range(N_SLICES):
+                for k in range(N_SIDES):
+                    q, w = self._synced_extraction(t1_slices[i, j], t2_slices[i, j], si_joints[i, j, k], illium[i, j],
+                                                   sacrum[i, j], q_l, q_d, k)
+                    quartiles[i, :, j, k] = q
+                    weights[i, j, k] = w
+
+        # save to tmp dir if necessary
+        if out_file is not None:
+            mkdir(os.path.dirname(out_file[0]))
+            np.save(out_file[0], quartiles)
+            np.save(out_file[1], weights)
+
+        return quartiles, weights
+
+    def _extract_scores(self, scores):
+
+        n = len(scores[0])
+
+        q_scores = np.asarray(scores[0], dtype=int)
+        s_scores_i = np.asarray(scores[1], dtype=int)
+        s_scores_d = np.asarray(scores[2], dtype=int)
+        sparcc = np.sum(q_scores.reshape(n, -1), axis=1) + np.sum(s_scores_i.reshape(n, -1), axis=1) + \
+                 np.sum(s_scores_i.reshape(n, -1), axis=1)
+        sparcc = sparcc / 72
+
+        return q_scores, s_scores_i, s_scores_d, sparcc
+
+
+class InflammationQuartileDataset(data.Dataset):
+    """
+    Dataset that processes the UZ MRI data for inflammation prediction
+
+    :param data_path: path to the directory containing the merged (preprocessed) data, score and slicenumbers files
+    :param si_joint_model: model that is able to locate the SI joints
+    :param illum_model: model that is able to segment the illium
+    :param sacrum_model: model that is able to segment the sacrum
+    :param optional q_l: size of the quartiles
+    :param optional q_d: margin of the quartiles
+    :param optional range_split: range of slices (start, stop) to select (normalized between 0 and 1)
+    :param optional transform: augmentation transformer
+    """
+
+    def __init__(self, data_path, si_joint_model, illum_model, sacrum_model, q_l=64, q_d=10, range_split=(0, 1),
+                 transform=None):
+        self.data_path = data_path
+        self.si_joint_model = si_joint_model
+        self.illum_model = illum_model
+        self.sacrum_model = sacrum_model
+        self.q_l = q_l
+        self.q_d = q_d
+        self.range_split = range_split
+        self.transform = transform
+
+        # load all necessary files
+        self.scores = load(os.path.join(data_path, SCORES_PP_FILE))
+        self.slicenumbers = load(os.path.join(data_path, SLICENUMBERS_PP_FILE))
+        self.t1_data = load(os.path.join(data_path, T1_PP_FILE))
+        self.t2_data = load(os.path.join(data_path, T2_PP_FILE))
+
+        # shuffle the data
+        self._shuffle_data()
+
+        # select a subset of the data
+        start, stop = range_split
+        start = int(start * len(self.t1_data))
+        stop = int(stop * len(self.t1_data))
+        self.scores = tuple([scoreset[start:stop] for scoreset in self.scores])
+        self.slicenumbers = (self.slicenumbers[0][start:stop], self.slicenumbers[1][start:stop])
+        self.t1_data = self.t1_data[start:stop]
+        self.t2_data = self.t2_data[start:stop]
+
+        # extract slices
+        self.t1_slices = self._extract_slices(self.t1_data, self.slicenumbers[1])
+        self.t2_slices = self._extract_slices(self.t2_data, self.slicenumbers[0],
+                                              target_size=self.t1_slices[0].shape[1:])
+
+        # pre-compute SI joint locations and illium/sacrum segmentations
+        SI_JOINTS_TMP_FILE = os.path.join(CACHE_DIR, '%s_%d_%d.%s' % (SI_JOINTS_TMP, start, stop, EXT))
+        SEG_I_TMP_FILE = os.path.join(CACHE_DIR, '%s_%d_%d.%s' % (SEG_I_TMP, start, stop, EXT))
+        SEG_S_TMP_FILE = os.path.join(CACHE_DIR, '%s_%d_%d.%s' % (SEG_S_TMP, start, stop, EXT))
+        if not os.path.exists(SI_JOINTS_TMP_FILE) or \
+           not os.path.exists(SEG_I_TMP_FILE) or \
+           not os.path.exists(SEG_S_TMP_FILE):
+            t1_slices_clahe = self._compute_clahe(self.t1_slices, clip_limit=T1_CLIPLIMIT)
+        if os.path.exists(SI_JOINTS_TMP_FILE):
+            self.si_joints = np.load(SI_JOINTS_TMP_FILE)
+        else:
+            self.si_joints = self._compute_joints(t1_slices_clahe, self.si_joint_model, out_file=SI_JOINTS_TMP_FILE)
+        if os.path.exists(SEG_I_TMP_FILE):
+            self.illium = np.load(SEG_I_TMP_FILE)
+        else:
+            self.illium = self._compute_segmentation(t1_slices_clahe, self.illum_model, out_file=SEG_I_TMP_FILE)
+        if os.path.exists(SEG_S_TMP_FILE):
+            self.sacrum = np.load(SEG_S_TMP_FILE)
+        else:
+            self.sacrum = self._compute_segmentation(t1_slices_clahe, self.sacrum_model, out_file=SEG_S_TMP_FILE)
+
+        # extract quartiles and corresponding weight maps
+        Q_TMP_FILE = os.path.join(CACHE_DIR, '%s_%d_%d.%s' % (Q_TMP, start, stop, EXT))
+        W_TMP_FILE = os.path.join(CACHE_DIR, '%s_%d_%d.%s' % (W_TMP, start, stop, EXT))
+        if os.path.exists(Q_TMP_FILE) and os.path.exists(W_TMP_FILE):
+            self.quartiles = np.load(Q_TMP_FILE)
+            self.weights = np.load(W_TMP_FILE)
+        else:
+            self.quartiles, self.weights = self._extract_quartiles(self.t1_slices, self.t2_slices, self.si_joints,
+                                                                   self.illium, self.sacrum, self.q_l, self.q_d,
+                                                                   out_file=(Q_TMP_FILE, W_TMP_FILE))
+
+        # compute stats for z-normalization
+        self.mu = [self.quartiles[:, i, ...].mean() for i in range(self.quartiles.shape[1])]
+        self.mu.append(self.weights.mean())
+        self.std = [self.quartiles[:, i, ...].std() for i in range(self.quartiles.shape[1])]
+        self.std.append(self.weights.std())
+
+        # extract scores
+        self.q_scores, self.s_scores_i, self.s_scores_d, self.sparcc = self._extract_scores(self.scores)
+
+    def __getitem__(self, i):
+        quartiles = normalize(self.quartiles[i], type='minmax')
+        weighted_quartiles = np.concatenate((quartiles, self.weights[i][np.newaxis, ...]))
+
+        # augmentation
+        if self.transform is not None:
+            c, n_slices, n_sides, n_quartiles, q, _ = weighted_quartiles.shape
+            for slice in range(n_slices):  # apply augmentations on a slice level
+                wq = np.reshape(weighted_quartiles[:, slice, ...], (-1, q, q))
+                wq = self.transform(wq)
+                weighted_quartiles[:, slice, ...] = np.reshape(wq, (c, n_sides, n_quartiles, q, q))
+
+        return weighted_quartiles, self.q_scores[i], self.s_scores_i[i], self.s_scores_d[i], self.sparcc[i]
+
+    def __len__(self):
+        return len(self.quartiles)
+
+    def _shuffle_data(self):
+        inds_shuffled = np.random.permutation(np.arange(len(self.t1_data)))
+        self.scores = tuple([[scoreset[i] for i in inds_shuffled] for scoreset in self.scores])
+        self.slicenumbers = ([self.slicenumbers[0][i] for i in inds_shuffled],
+                             [self.slicenumbers[1][i] for i in inds_shuffled])
+        self.t1_data = [self.t1_data[i] for i in inds_shuffled]
+        self.t2_data = [self.t2_data[i] for i in inds_shuffled]
+
+    def _extract_slices(self, data, slicenumbers, target_size=None):
+
+        # initialize slices
+        data_size = data[0].shape[1:]
+        if target_size is None:
+            slices = np.zeros((len(data), N_SLICES, data_size[0], data_size[1]), dtype='uint16')
+        else:
+            slices = np.zeros((len(data), N_SLICES, target_size[0], target_size[1]), dtype='uint16')
+
+        # extract slices
+        for i in range(len(data)):
+            for j in range(N_SLICES):
+                s = slicenumbers[i][j]
+                if target_size is None:
+                    slices[i, j, ...] = data[i][s]
+                else:
+                    # upsample to the target size
+                    slices[i, j, ...] = cv2.resize(data[i][s], dsize=target_size, interpolation=cv2.INTER_CUBIC)
+
+        return slices
+
+    def _compute_clahe(self, data, clip_limit=T1_CLIPLIMIT):
+
+        clahe = cv2.createCLAHE(clipLimit=clip_limit)
+        data = data.astype(float)
+        for i in range(data.shape[0]):
+            for j in range(data.shape[1]):
+                x = normalize(data[i, j, ...], type='minmax')
+                data[i, j, ...] = clahe.apply((x * (2 ** 16 - 1)).astype('uint16')) / (2 ** 16 - 1)
+
+        return data
+
+    def _filter_bboxes(self, bboxes, sz):
+
+        x_max, y_max = sz
+
+        left_bboxes = []
+        right_bboxes = []
+        for bbox in bboxes:
+            x, y, x_, y_ = bbox[:4]
+            if x > x_max // 2 and x_ < x_max and y >= 0 and y_ < y_max:
+                left_bboxes.append(bbox)
+            elif x < x_max // 2 and x_ >= 0 and y >= 0 and y_ < y_max:
+                right_bboxes.append(bbox)
+
+        return np.asarray(left_bboxes), np.asarray(right_bboxes)
+
+    def _maximize_bbox_score(self, bboxes):
+
+        scores = bboxes[:, 4]
+        i_max = np.argmax(scores)
+
+        return bboxes[i_max]
+
+    def _compute_joints(self, data, model, out_file=None):
+
+        # load the joint model
+        with set_layer_config(scriptable=False):
+            bench = create_model(
+                'tf_efficientdet_d0_mri',
+                bench_task='predict',
+                num_classes=1,
+                redundant_bias=None,
+                soft_nms=None,
+                checkpoint_path=model,
+            )
+        bench = bench.cuda()
+        amp_autocast = torch.cuda.amp.autocast
+        bench.eval()
+
+        # forward propagation
+        bboxes = np.zeros((data.shape[0], N_SLICES, 2, 4))
+        with torch.no_grad():
+            for i in tqdm(range(data.shape[0]), desc='Computing SI joint locations'):
+                x = data[i]
+                x = (x - X_MU) / X_STD
+                input = torch.from_numpy(np.repeat(x[:, np.newaxis, ...], 3, axis=1)).cuda()
+                with amp_autocast():
+                    output = bench(input.float()).cpu().numpy()
+                for j in range(N_SLICES):
+                    bb_l, bb_r = self._filter_bboxes(output[j], x.shape[1:])
+                    bboxes[i, j, 0] = self._maximize_bbox_score(bb_l)[:4]
+                    bboxes[i, j, 1] = self._maximize_bbox_score(bb_r)[:4]
+
+        # save to tmp dir if necessary
+        if out_file is not None:
+            mkdir(os.path.dirname(out_file))
+            np.save(out_file, bboxes)
+
+        return bboxes
+
+    def _compute_segmentation(self, data, model, out_file=None):
+
+        # load the segmentation model
+        net = UNet2D(feature_maps=FM, levels=LEVELS, norm=NORM, activation=ACTIVATION, coi=COI)
+        net.load_state_dict(torch.load(model))
+        net = net.cuda().eval()
+
+        # forward propagation
+        segmentation = np.zeros_like(data)
+        with torch.no_grad():
+            for i in tqdm(range(data.shape[0]), desc='Computing segmentation'):
+                x = data[i]
+                input = torch.from_numpy(x[:, np.newaxis, ...]).cuda()
+                output = torch.softmax(net(input.float()), dim=1).cpu().numpy()
+                segmentation[i, ...] = output[:, 1, ...]
+
+        # save to tmp dir if necessary
+        if out_file is not None:
+            mkdir(os.path.dirname(out_file))
+            np.save(out_file, segmentation)
+
+        return segmentation
+
+    def _synced_extraction(self, x_1, x_2, bbox, p_i, p_s, q_l, q_d, s):
+
+        # bounding box coordinates
+        i_ul, j_ul, i_br, j_br = bbox
+
+        # joint location
+        i_j = int((i_ul + i_br) // 2)
+        j_j = int((j_ul + j_br) // 2)
+
+        # joint angle
+        alpha_j = np.arctan((i_br - i_ul) / (j_br - j_ul))
+
+        # rotate image to fix joint region
+        sgn = 1 if s == 0 else -1
+        R = cv2.getRotationMatrix2D((i_j, j_j), (sgn * alpha_j) / np.pi * 180, 1)
+        x_1_r = cv2.warpAffine(x_1, R, x_1.shape)
+        x_2_r = cv2.warpAffine(x_2, R, x_2.shape)
+        p_i_r = cv2.warpAffine(p_i, R, p_i.shape)
+        p_s_r = cv2.warpAffine(p_s, R, p_s.shape)
+        x_r = np.stack((x_1_r, x_2_r, p_i_r, p_s_r))
+
+        # extract patches
+        p = q_l + 2 * q_d
+        if s == 0:
+            ds = ((1, -1), (-1, -1), (-1, 1), (1, 1))
+        else:
+            ds = ((-1, -1), (1, -1), (1, 1), (-1, 1))
+        q_ = np.zeros((x_r.shape[0], N_QUARTILES, p, p))
+        for k, (di, dj) in enumerate(ds):
+            i0, i1 = i_j-di*q_d, i_j+di*(q_l+q_d)
+            j0, j1 = j_j-dj*q_d, j_j+dj*(q_l+q_d)
+            i_start, i_stop = min(i0, i1), max(i0, i1)
+            j_start, j_stop = min(j0, j1), max(j0, j1)
+            q_[:, k, ...] = x_r[:, j_start:j_stop, i_start:i_stop]
+        q = q_[:2, ...].astype('uint16')
+        s = q_[2, ...]
+        s[1:3] = q_[3, 1:3, ...]
+
+        # compute normalized weights from segmentation
+        w = self._compute_weights(s)
+
+        return q, w
+
+    def _extract_quartiles(self, t1_slices, t2_slices, si_joints, illium, sacrum, q_l, q_d, out_file=None):
+
+        # allocate space for quartiles and corresponding weight maps
+        n = len(t1_slices)
+        p = q_l + 2 * q_d
+        quartiles = np.zeros((n, 2, N_SLICES, N_SIDES, N_QUARTILES, p, p), dtype='uint16')
+        weights = np.zeros((n, N_SLICES, N_SIDES, N_QUARTILES, p, p))
+
+        # extract quartiles and weight maps
+        for i in range(n):
+            for j in range(N_SLICES):
+                for k in range(N_SIDES):
+                    q, w = self._synced_extraction(t1_slices[i, j], t2_slices[i, j], si_joints[i, j, k], illium[i, j],
+                                                   sacrum[i, j], q_l, q_d, k)
+                    quartiles[i, :, j, k] = q
+                    weights[i, j, k] = w
+
+        # save to tmp dir if necessary
+        if out_file is not None:
+            mkdir(os.path.dirname(out_file[0]))
+            np.save(out_file[0], quartiles)
+            np.save(out_file[1], weights)
+
+        return quartiles, weights
+
+    def _extract_scores(self, scores):
+
+        n = len(scores[0])
+
+        q_scores = np.asarray(scores[0], dtype=int)
+        s_scores_i = np.asarray(scores[1], dtype=int)
+        s_scores_d = np.asarray(scores[2], dtype=int)
+        sparcc = np.sum(q_scores.reshape(n, -1), axis=1) + np.sum(s_scores_i.reshape(n, -1), axis=1) + \
+                 np.sum(s_scores_i.reshape(n, -1), axis=1)
+
+        return q_scores, s_scores_i, s_scores_d, sparcc
 
 
 def _validate_shape(input_shape, data_shape, orientation=0, in_channels=1, levels=4):
