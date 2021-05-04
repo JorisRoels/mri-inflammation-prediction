@@ -116,7 +116,7 @@ if __name__ == '__main__':
     """
     print_frm('Testing network')
     test.mode = INFLAMMATION_MODULE
-    test_loader = DataLoader(test, batch_size=args.test_batch_size, num_workers=args.num_workers, pin_memory=True)
+    test_loader = DataLoader(test, batch_size=64*args.test_batch_size, num_workers=args.num_workers, pin_memory=True)
     trainer.test(net, test_loader)
 
     """
@@ -127,7 +127,7 @@ if __name__ == '__main__':
     val.mode = INTENSE_INFLAMMATION_MODULE
     train_loader = DataLoader(train, batch_size=16*args.train_batch_size, num_workers=args.num_workers, pin_memory=True,
                               shuffle=True)
-    val_loader = DataLoader(val, batch_size=4*args.test_batch_size, num_workers=args.num_workers, pin_memory=True)
+    val_loader = DataLoader(val, batch_size=16*args.test_batch_size, num_workers=args.num_workers, pin_memory=True)
     net.set_training_mode(INTENSE_INFLAMMATION_MODULE)
     monitor = 'val/ii-roc-auc'
     mode = 'max'
@@ -142,8 +142,8 @@ if __name__ == '__main__':
         Testing the network for intense inflammation prediction
     """
     print_frm('Testing network')
-    test.mode = INFLAMMATION_MODULE
-    test_loader = DataLoader(test, batch_size=args.test_batch_size, num_workers=args.num_workers, pin_memory=True)
+    test.mode = INTENSE_INFLAMMATION_MODULE
+    test_loader = DataLoader(test, batch_size=16*args.test_batch_size, num_workers=args.num_workers, pin_memory=True)
     trainer.test(net, test_loader)
 
     """
