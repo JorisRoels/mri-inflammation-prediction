@@ -108,8 +108,16 @@ if __name__ == '__main__':
     trainer = pl.Trainer(max_epochs=args.epochs, gpus=args.gpus, accelerator=args.accelerator,
                          default_root_dir=args.log_dir, flush_logs_every_n_steps=args.log_freq,
                          log_every_n_steps=args.log_freq, callbacks=[checkpoint_callback],
-                         progress_bar_refresh_rate=args.log_refresh_rate)
+                         progress_bar_refresh_rate=args.log_refresh_rate, num_sanity_val_steps=0)
     trainer.fit(net, train_loader, val_loader)
+
+    """
+        Testing the network for inflammation prediction
+    """
+    print_frm('Testing network')
+    test.mode = INFLAMMATION_MODULE
+    test_loader = DataLoader(test, batch_size=args.test_batch_size, num_workers=args.num_workers, pin_memory=True)
+    trainer.test(net, test_loader)
 
     """
         Train the intense inflammation network
@@ -127,8 +135,16 @@ if __name__ == '__main__':
     trainer = pl.Trainer(max_epochs=args.epochs, gpus=args.gpus, accelerator=args.accelerator,
                          default_root_dir=args.log_dir, flush_logs_every_n_steps=args.log_freq,
                          log_every_n_steps=args.log_freq, callbacks=[checkpoint_callback],
-                         progress_bar_refresh_rate=args.log_refresh_rate)
+                         progress_bar_refresh_rate=args.log_refresh_rate, num_sanity_val_steps=0)
     trainer.fit(net, train_loader, val_loader)
+
+    """
+        Testing the network for intense inflammation prediction
+    """
+    print_frm('Testing network')
+    test.mode = INFLAMMATION_MODULE
+    test_loader = DataLoader(test, batch_size=args.test_batch_size, num_workers=args.num_workers, pin_memory=True)
+    trainer.test(net, test_loader)
 
     """
         Finetune the complete network
@@ -146,11 +162,11 @@ if __name__ == '__main__':
     trainer = pl.Trainer(max_epochs=args.epochs, gpus=args.gpus, accelerator=args.accelerator,
                          default_root_dir=args.log_dir, flush_logs_every_n_steps=args.log_freq,
                          log_every_n_steps=args.log_freq, callbacks=[checkpoint_callback],
-                         progress_bar_refresh_rate=args.log_refresh_rate)
+                         progress_bar_refresh_rate=args.log_refresh_rate, num_sanity_val_steps=0)
     trainer.fit(net, train_loader, val_loader)
 
     """
-        Testing the network
+        Testing the network for sparcc scoring
     """
     print_frm('Testing network')
     test.mode = JOINT
