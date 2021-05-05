@@ -123,22 +123,22 @@ if __name__ == '__main__':
     print_frm('Building the network')
     net = SPARCC_CNN(backbone=args.backbone, lambda_s=args.lambda_s, lr=args.lr, w_sparcc=w_sparcc)
 
-    # """
-    #     Train the inflammation network
-    # """
-    # print_frm('Starting training of the inflammation network')
-    # trainer = _train_module(net, train, val, args, mode=INFLAMMATION_MODULE, monitor='val/i-roc-auc', monitor_mode='max')
-    # print_frm('Testing network')
-    # _test_module(trainer, net, test, args, mode=INFLAMMATION_MODULE)
-    #
-    # """
-    #     Train the intense inflammation network
-    # """
-    # print_frm('Starting training of the intense inflammation network')
-    # trainer = _train_module(net, train, val, args, mode=INTENSE_INFLAMMATION_MODULE, monitor='val/ii-roc-auc', monitor_mode='max')
-    # print_frm('Testing network')
-    # _test_module(trainer, net, test, args, mode=INTENSE_INFLAMMATION_MODULE)
-    #
+    """
+        Train the inflammation network
+    """
+    print_frm('Starting training of the inflammation network')
+    trainer = _train_module(net, train, val, args, mode=INFLAMMATION_MODULE, monitor='val/i-roc-auc', monitor_mode='max')
+    print_frm('Testing network')
+    _test_module(trainer, net, test, args, mode=INFLAMMATION_MODULE)
+
+    """
+        Train the intense inflammation network
+    """
+    print_frm('Starting training of the intense inflammation network')
+    trainer = _train_module(net, train, val, args, mode=INTENSE_INFLAMMATION_MODULE, monitor='val/ii-roc-auc', monitor_mode='max')
+    print_frm('Testing network')
+    _test_module(trainer, net, test, args, mode=INTENSE_INFLAMMATION_MODULE)
+
     # """
     #     Train the SPARCC module
     # """
@@ -146,11 +146,11 @@ if __name__ == '__main__':
     # trainer = _train_module(net, train, val, args, mode=SPARCC_MODULE, monitor='val/sim-mae', monitor_mode='min')
     # print_frm('Testing network')
     # _test_module(trainer, net, test, args, mode=SPARCC_MODULE)
-
-    """
-        Finetune the whole thing
-    """
-    print_frm('Starting finetuning on the full network')
-    trainer = _train_module(net, train, val, args, mode=JOINT, monitor='val/sim-mae', monitor_mode='min')
-    print_frm('Testing network')
-    _test_module(trainer, net, test, args, mode=JOINT)
+    #
+    # """
+    #     Finetune the whole thing
+    # """
+    # print_frm('Starting finetuning on the full network')
+    # trainer = _train_module(net, train, val, args, mode=JOINT, monitor='val/sim-mae', monitor_mode='min')
+    # print_frm('Testing network')
+    # _test_module(trainer, net, test, args, mode=JOINT)
