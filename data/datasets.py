@@ -31,7 +31,7 @@ class SPARCCDataset(data.Dataset):
     :param optional mode: training mode, influences the type of generated samples:
                     - INFLAMMATION_MODULE: [CHANNELS, QUARTILE_SIZE, QUARTILE_SIZE]
                     - INTENSE_INFLAMMATION_MODULE: [CHANNELS, N_QUARTILES, QUARTILE_SIZE, QUARTILE_SIZE]
-                    - JOINT: [CHANNELS, N_SLICES, N_SIDES, N_QUARTILES, QUARTILE_SIZE, QUARTILE_SIZE]
+                    - JOINT/SPARCC_MODULE: [CHANNELS, N_SLICES, N_SIDES, N_QUARTILES, QUARTILE_SIZE, QUARTILE_SIZE]
     """
 
     def __init__(self, data_path, si_joint_model, illum_model, sacrum_model, range_split=(0, 1),

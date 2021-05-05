@@ -15,6 +15,39 @@ from models.sparcc_cnn import SPARCC_CNN
 from util.constants import *
 
 
+factor = {INFLAMMATION_MODULE: 64, INTENSE_INFLAMMATION_MODULE: 12, SPARCC_MODULE: 1, JOINT: 1}
+
+
+def _train_module(net, train_data, val_data, args, mode=JOINT, monitor='val/sim-mae', monitor_mode='min'):
+
+    train_data.mode = mode
+    val_data.mode = mode
+    train_loader = DataLoader(train_data, batch_size=factor[mode]*args.train_batch_size, num_workers=args.num_workers,
+                              pin_memory=True, shuffle=True)
+    val_loader = DataLoader(val_data, batch_size=factor[mode]*args.test_batch_size, num_workers=args.num_workers,
+                            pin_memory=True)
+    net.set_training_mode(mode)
+    checkpoint_callback = ModelCheckpoint(save_top_k=5, verbose=True, monitor=monitor, mode=monitor_mode)
+    trainer = pl.Trainer(max_epochs=args.epochs, gpus=args.gpus, accelerator=args.accelerator,
+                         default_root_dir=args.log_dir, flush_logs_every_n_steps=args.log_freq,
+                         log_every_n_steps=args.log_freq, callbacks=[checkpoint_callback],
+                         progress_bar_refresh_rate=args.log_refresh_rate, num_sanity_val_steps=0)
+    trainer.fit(net, train_loader, val_loader)
+
+    return trainer
+
+
+def _test_module(trainer, net, test_data, args, mode=JOINT):
+
+    test_data.mode = mode
+    net.load_state_dict(torch.load(trainer.checkpoint_callback.best_model_path)['state_dict'])
+    test_loader = DataLoader(test_data, batch_size=factor[mode]*args.test_batch_size, num_workers=args.num_workers,
+                             pin_memory=True)
+    trainer.test(net, test_loader)
+
+    return trainer
+
+
 if __name__ == '__main__':
 
     # parse all the arguments
@@ -33,7 +66,7 @@ if __name__ == '__main__':
     parser.add_argument("--lambda_s", help="SPARCC similarity regularization parameter", type=float, default=1e2)
 
     # optimization parameters
-    parser.add_argument("--epochs", help="Number of training epochs", type=int, default=20)
+    parser.add_argument("--epochs", help="Number of training epochs", type=int, default=50)
     parser.add_argument("--lr", help="Learning rate for the optimization", type=float, default=1e-3)
 
     # compute parameters
@@ -76,9 +109,7 @@ if __name__ == '__main__':
     tmp1 = freq == 0
     tmp2 = freq != 0
     freq[tmp1] = 1
-    w = 1 / (freq)
-    wc = np.sum(w[tmp2])
-    w_sparcc = w / wc
+    w_sparcc = 1 / (freq)
     print_frm('Train data distribution: Infl: %.2f - Non-infl: %.2f' % (100*np.mean(train.q_scores),
                                                                         100*np.mean(1-train.q_scores)))
     print_frm('Val data distribution: Infl: %.2f - Non-infl: %.2f' % (100*np.mean(val.q_scores),
@@ -92,83 +123,34 @@ if __name__ == '__main__':
     print_frm('Building the network')
     net = SPARCC_CNN(backbone=args.backbone, lambda_s=args.lambda_s, lr=args.lr, w_sparcc=w_sparcc)
 
-    """
-        Train the inflammation network
-    """
-    print_frm('Starting training of the inflammation network')
-    train.mode = INFLAMMATION_MODULE
-    val.mode = INFLAMMATION_MODULE
-    train_loader = DataLoader(train, batch_size=64*args.train_batch_size, num_workers=args.num_workers, pin_memory=True,
-                              shuffle=True)
-    val_loader = DataLoader(val, batch_size=64*args.test_batch_size, num_workers=args.num_workers, pin_memory=True)
-    net.set_training_mode(INFLAMMATION_MODULE)
-    monitor = 'val/i-roc-auc'
-    mode = 'max'
-    checkpoint_callback = ModelCheckpoint(save_top_k=5, verbose=True, monitor=monitor, mode=mode)
-    trainer = pl.Trainer(max_epochs=args.epochs, gpus=args.gpus, accelerator=args.accelerator,
-                         default_root_dir=args.log_dir, flush_logs_every_n_steps=args.log_freq,
-                         log_every_n_steps=args.log_freq, callbacks=[checkpoint_callback],
-                         progress_bar_refresh_rate=args.log_refresh_rate, num_sanity_val_steps=0)
-    trainer.fit(net, train_loader, val_loader)
+    # """
+    #     Train the inflammation network
+    # """
+    # print_frm('Starting training of the inflammation network')
+    # trainer = _train_module(net, train, val, args, mode=INFLAMMATION_MODULE, monitor='val/i-roc-auc', monitor_mode='max')
+    # print_frm('Testing network')
+    # _test_module(trainer, net, test, args, mode=INFLAMMATION_MODULE)
+    #
+    # """
+    #     Train the intense inflammation network
+    # """
+    # print_frm('Starting training of the intense inflammation network')
+    # trainer = _train_module(net, train, val, args, mode=INTENSE_INFLAMMATION_MODULE, monitor='val/ii-roc-auc', monitor_mode='max')
+    # print_frm('Testing network')
+    # _test_module(trainer, net, test, args, mode=INTENSE_INFLAMMATION_MODULE)
+    #
+    # """
+    #     Train the SPARCC module
+    # """
+    # print_frm('Starting training of the SPARCC module')
+    # trainer = _train_module(net, train, val, args, mode=SPARCC_MODULE, monitor='val/sim-mae', monitor_mode='min')
+    # print_frm('Testing network')
+    # _test_module(trainer, net, test, args, mode=SPARCC_MODULE)
 
     """
-        Testing the network for inflammation prediction
+        Finetune the whole thing
     """
+    print_frm('Starting finetuning on the full network')
+    trainer = _train_module(net, train, val, args, mode=JOINT, monitor='val/sim-mae', monitor_mode='min')
     print_frm('Testing network')
-    test.mode = INFLAMMATION_MODULE
-    test_loader = DataLoader(test, batch_size=64*args.test_batch_size, num_workers=args.num_workers, pin_memory=True)
-    trainer.test(net, test_loader)
-
-    """
-        Train the intense inflammation network
-    """
-    print_frm('Starting training of the intense inflammation network')
-    train.mode = INTENSE_INFLAMMATION_MODULE
-    val.mode = INTENSE_INFLAMMATION_MODULE
-    train_loader = DataLoader(train, batch_size=16*args.train_batch_size, num_workers=args.num_workers, pin_memory=True,
-                              shuffle=True)
-    val_loader = DataLoader(val, batch_size=16*args.test_batch_size, num_workers=args.num_workers, pin_memory=True)
-    net.set_training_mode(INTENSE_INFLAMMATION_MODULE)
-    monitor = 'val/ii-roc-auc'
-    mode = 'max'
-    checkpoint_callback = ModelCheckpoint(save_top_k=5, verbose=True, monitor=monitor, mode=mode)
-    trainer = pl.Trainer(max_epochs=args.epochs, gpus=args.gpus, accelerator=args.accelerator,
-                         default_root_dir=args.log_dir, flush_logs_every_n_steps=args.log_freq,
-                         log_every_n_steps=args.log_freq, callbacks=[checkpoint_callback],
-                         progress_bar_refresh_rate=args.log_refresh_rate, num_sanity_val_steps=0)
-    trainer.fit(net, train_loader, val_loader)
-
-    """
-        Testing the network for intense inflammation prediction
-    """
-    print_frm('Testing network')
-    test.mode = INTENSE_INFLAMMATION_MODULE
-    test_loader = DataLoader(test, batch_size=16*args.test_batch_size, num_workers=args.num_workers, pin_memory=True)
-    trainer.test(net, test_loader)
-
-    """
-        Finetune the complete network
-    """
-    print_frm('Starting finetuning of the complete network')
-    train.mode = JOINT
-    val.mode = JOINT
-    train_loader = DataLoader(train, batch_size=args.train_batch_size, num_workers=args.num_workers, pin_memory=True,
-                              shuffle=True)
-    val_loader = DataLoader(val, batch_size=args.test_batch_size, num_workers=args.num_workers, pin_memory=True)
-    net.set_training_mode(JOINT)
-    monitor = 'val/sim-mae'
-    mode = 'min'
-    checkpoint_callback = ModelCheckpoint(save_top_k=5, verbose=True, monitor=monitor, mode=mode)
-    trainer = pl.Trainer(max_epochs=args.epochs, gpus=args.gpus, accelerator=args.accelerator,
-                         default_root_dir=args.log_dir, flush_logs_every_n_steps=args.log_freq,
-                         log_every_n_steps=args.log_freq, callbacks=[checkpoint_callback],
-                         progress_bar_refresh_rate=args.log_refresh_rate, num_sanity_val_steps=0)
-    trainer.fit(net, train_loader, val_loader)
-
-    """
-        Testing the network for sparcc scoring
-    """
-    print_frm('Testing network')
-    test.mode = JOINT
-    test_loader = DataLoader(test, batch_size=args.test_batch_size, num_workers=args.num_workers, pin_memory=True)
-    trainer.test(net, test_loader)
+    _test_module(trainer, net, test, args, mode=JOINT)

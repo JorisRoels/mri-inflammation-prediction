@@ -1,6 +1,8 @@
 import pytorch_lightning as pl
 import os
 
+import torch
+
 from neuralnets.networks.blocks import *
 from neuralnets.util.augmentation import *
 from neuralnets.util.io import mkdir
@@ -9,6 +11,49 @@ from sklearn.metrics import roc_auc_score
 from util.constants import *
 from util.losses import SPARCCSimilarityLoss
 from util.tools import scores, save, mae
+
+
+class SPARCC_Linear_Module(nn.Module):
+    """
+    Transforms a set of I and II feature vectors into a SPARCC score
+    """
+
+    def __init__(self, f_dim=512):
+        super().__init__()
+
+        self.i_module = nn.Linear(N_SLICES * N_SIDES * f_dim, f_dim)
+        self.ii_module = nn.Linear(N_SLICES * N_SIDES * f_dim, f_dim)
+        self.merge_module = nn.Linear(2 * f_dim, 1)
+        self.sigmoid = nn.Sigmoid()
+
+    def forward(self, f_im, f_ii):
+        """
+        Perform forward propagation of the module
+
+        :param f_im: the merged inflammation feature vector that originates from the merging module
+                     should have shape [B, N_SLICES, N_SIDES, F_DIM]
+        :param f_ii: the intense inflammation feature vector that originates from the II feature extractor
+                     should have shape [B, N_SLICES, N_SIDES, F_DIM]
+        :return: output of the module y, i.e. the sparcc score [B]
+        """
+
+        # reshape to appropriate size
+        f_im = torch.cat([f_im[:, :, i, :] for i in range(N_SIDES)], dim=-1)
+        f_im = torch.cat([f_im[:, i, :] for i in range(N_SLICES)], dim=-1)
+        f_ii = torch.cat([f_ii[:, :, i, :] for i in range(N_SIDES)], dim=-1)
+        f_ii = torch.cat([f_ii[:, i, :] for i in range(N_SLICES)], dim=-1)
+        # f_im = f_im.view(f_im.size(0), -1)
+        # f_ii = f_ii.view(f_ii.size(0), -1)
+
+        # propagate first module to reduce dimensionality
+        f_i = self.i_module(f_im)
+        f_ii = self.ii_module(f_ii)
+
+        # concatenate processed features and compute sparcc score
+        y = self.merge_module(torch.cat((f_i, f_ii), dim=1))
+        y = self.sigmoid(y).view(f_i.size(0))
+
+        return y
 
 
 class SPARCC_CNN_Module(nn.Module):
@@ -33,6 +78,7 @@ class SPARCC_CNN_Module(nn.Module):
         self.classifier_i = self._construct_classifier()
         self.classifier_ii = self._construct_classifier(double_inputs=True)
         self.merge_q_module = self._construct_merge_q_module()
+        self.sparcc_module = self._construct_sparcc_module()
 
     def _modify_fe_channels(self, model, in_channels):
 
@@ -112,6 +158,21 @@ class SPARCC_CNN_Module(nn.Module):
 
         return mq
 
+    def _construct_sparcc_module(self):
+
+        if self.backbone in ['AlexNet']:
+            f_dim = self.classifier_i[1].in_features
+        elif self.backbone in ['VGG11', 'VGG16']:
+            f_dim = self.classifier_i[0].in_features
+        elif self.backbone in ['ResNet18', 'ResNet101', 'ResNeXt101', 'DenseNet121', 'DenseNet201']:
+            f_dim = self.classifier_i.in_features
+        else:
+            f_dim = -1
+
+        sm = SPARCC_Linear_Module(f_dim)
+
+        return sm
+
     def forward(self, x, mode=JOINT):
         """
         Perform forward propagation of the module
@@ -130,14 +191,6 @@ class SPARCC_CNN_Module(nn.Module):
                             (None, if training mode is INFLAMMATION_MODULE)
                     - y_s: sparcc score prediction [B] (None, if training mode is not JOINT)
         """
-        # format of the input depends on the training mode:
-        #  - INFLAMMATION_MODULE: [B, CHANNELS, QUARTILE_SIZE, QUARTILE_SIZE]
-        #  - INTENSE_INFLAMMATION_MODULE: [B, CHANNELS, N_QUARTILES, QUARTILE_SIZE, QUARTILE_SIZE]
-        #  - JOINT: [B, CHANNELS, N_SLICES, N_SIDES, N_QUARTILES, QUARTILE_SIZE, QUARTILE_SIZE]
-        # format of the output:
-        #  - inflammation prediction [B, N_CLASSES, N_SLICES, N_SIDES, N_QUARTILES]
-        #  - intense inflammation prediction [B, N_CLASSES, N_SLICES, N_SIDES] (None, if training mode is INFLAMMATION_MODULE)
-        #  - sparcc score prediction [B] (None, if training mode is not JOINT)
 
         # get shape values
         b = x.size(0)
@@ -152,7 +205,7 @@ class SPARCC_CNN_Module(nn.Module):
 
         # predict intense inflammation
         y_ii = None
-        if mode == INTENSE_INFLAMMATION_MODULE or mode == JOINT:
+        if mode == INTENSE_INFLAMMATION_MODULE or mode == SPARCC_MODULE or mode == JOINT:
             # feature extractor
             x_s = x.view(-1, channels * N_QUARTILES, q, q)
             f_ii = self.feature_extractor_ii(x_s)
@@ -168,8 +221,13 @@ class SPARCC_CNN_Module(nn.Module):
 
         # compute predicted sparcc score
         y_s = None
-        if mode == JOINT:
+        if mode == SPARCC_MODULE or mode == JOINT:
             y_s = (torch.sum(torch.softmax(y_i, dim=1)[:, 1]) + torch.sum(torch.softmax(y_ii, dim=1)[:, 1])) / 72
+            # # reshape feature vectors
+            # f_im = f_im.view(-1, N_SLICES, N_SIDES, f_im.size(-1))
+            # f_ii = f_ii.view(-1, N_SLICES, N_SIDES, f_ii.size(-1))
+            # # compute sparcc score
+            # y_s = self.sparcc_module(f_im, f_ii)
 
         # reshape to proper format
         if mode == INFLAMMATION_MODULE:
@@ -178,7 +236,7 @@ class SPARCC_CNN_Module(nn.Module):
             y_i = y_i.view(b, y_i.size(1), N_QUARTILES)
         else:
             y_i = y_i.view(b, y_i.size(1), N_SLICES, N_SIDES, N_QUARTILES)
-        if mode == JOINT:
+        if mode == SPARCC_MODULE or mode == JOINT:
             y_ii = y_ii.view(b, y_ii.size(1), N_SLICES, N_SIDES)
 
         # output
@@ -207,29 +265,93 @@ class SPARCC_CNN(pl.LightningModule):
 
         return self.model(x, mode=mode)
 
-    def base_step(self, batch, batch_idx, phase='train'):
+    def base_step_i(self, batch, batch_idx, phase='train'):
 
         # transfer to suitable device and get labels
-        x, y_i, y_ii, y_di, y_s = 5*[None]
-        if self.training_mode == INFLAMMATION_MODULE:
-            x, y_i = batch
-        elif self.training_mode == INTENSE_INFLAMMATION_MODULE:
-            x, y_i, y_ii = batch
-            y_ii = y_ii.long()
-        else:
-            x, y_i, y_ii, y_di, y_s = batch
-            y_ii = y_ii.long()
-            y_s = y_s.float()
+        x, y_i = batch
         x = x.float()
         y_i = y_i.long()
+
+        # forward prop
+        y_i_pred, _, _ = self(x, mode=self.training_mode)
+
+        # compute loss and log output
+        loss_total = self.loss_ce_i(y_i_pred, y_i)
+        y_i_pred = torch.softmax(y_i_pred, dim=1).detach().cpu().numpy()
+        y_i = y_i.cpu().numpy()
+        self.running_loss[phase]['i'] += loss_total
+        self.running_count[phase]['i'] += 1
+        self.y_true[phase]['i'].append(y_i)
+        self.y_pred[phase]['i'].append(y_i_pred)
+        self.running_loss[phase]['total'] += loss_total
+        self.running_count[phase]['total'] += 1
+
+        return loss_total
+
+    def base_step_ii(self, batch, batch_idx, phase='train'):
+
+        # transfer to suitable device and get labels
+        x, _, y_ii = batch
+        x = x.float()
+        y_ii = y_ii.long()
+
+        # forward prop
+        _, y_ii_pred, _ = self(x, mode=self.training_mode)
+
+        # compute loss and log output
+        loss_total = self.loss_ce_ii(y_ii_pred, y_ii)
+        y_ii_pred = torch.softmax(y_ii_pred, dim=1).detach().cpu().numpy()
+        y_ii = y_ii.cpu().numpy()
+        self.running_loss[phase]['ii'] += loss_total
+        self.running_count[phase]['ii'] += 1
+        self.y_true[phase]['ii'].append(y_ii)
+        self.y_pred[phase]['ii'].append(y_ii_pred)
+        self.running_loss[phase]['total'] += loss_total
+        self.running_count[phase]['total'] += 1
+
+        return loss_total
+
+    def base_step_s(self, batch, batch_idx, phase='train'):
+
+        # transfer to suitable device and get labels
+        x, _, _, _, y_s = batch
+        x = x.float()
+        y_s = y_s.float()
+
+        # forward prop
+        _, _, y_s_pred = self(x, mode=self.training_mode)
+        # print(y_s_pred)
+        # print(y_s)
+
+        # compute loss and log output
+        loss_total = self.loss_sim(y_s_pred, y_s)
+        y_s_pred = y_s_pred.detach().cpu().numpy()
+        y_s = y_s.cpu().numpy()
+        self.running_loss[phase]['sim'] += loss_total
+        self.running_count[phase]['sim'] += 1
+        self.y_true[phase]['sim'].append(y_s)
+        self.y_pred[phase]['sim'].append(np.reshape(y_s_pred, y_s.shape))
+        self.running_loss[phase]['total'] += loss_total
+        self.running_count[phase]['total'] += 1
+
+        return loss_total
+
+    def base_step_joint(self, batch, batch_idx, phase='train'):
+
+        # transfer to suitable device and get labels
+        x, y_i, y_ii, y_di, y_s = batch
+        x = x.float()
+        y_i = y_i.long()
+        y_ii = y_ii.long()
+        y_s = y_s.float()
 
         # forward prop
         y_i_pred, y_ii_pred, y_s_pred = self(x, mode=self.training_mode)
         # print(y_s_pred)
         # print(y_s)
 
-        # compute loss and log output
-        loss_i_ce = self.loss_ce_i(y_i_pred, y_i)
+        # inflammation loss
+        loss_i_ce = N_SIDES * N_QUARTILES * self.loss_ce_i(y_i_pred, y_i)
         loss_total = loss_i_ce
         y_i_pred = torch.softmax(y_i_pred, dim=1).detach().cpu().numpy()
         y_i = y_i.cpu().numpy()
@@ -237,28 +359,40 @@ class SPARCC_CNN(pl.LightningModule):
         self.running_count[phase]['i'] += 1
         self.y_true[phase]['i'].append(y_i)
         self.y_pred[phase]['i'].append(y_i_pred)
-        if self.training_mode == INTENSE_INFLAMMATION_MODULE or self.training_mode == JOINT:
-            loss_ii_ce = self.loss_ce_ii(y_ii_pred, y_ii)
-            loss_total = loss_total + loss_ii_ce
-            y_ii_pred = torch.softmax(y_ii_pred, dim=1).detach().cpu().numpy()
-            y_ii = y_ii.cpu().numpy()
-            self.running_loss[phase]['ii'] += loss_ii_ce
-            self.running_count[phase]['ii'] += 1
-            self.y_true[phase]['ii'].append(y_ii)
-            self.y_pred[phase]['ii'].append(y_ii_pred)
-        if self.training_mode == JOINT:
-            loss_sim = self.loss_sim(y_s_pred, y_s)
-            loss_total = loss_total + self.model.lambda_s * loss_sim
-            y_s_pred = y_s_pred.detach().cpu().numpy()
-            y_s = y_s.cpu().numpy()
-            self.running_loss[phase]['sim'] += loss_sim
-            self.running_count[phase]['sim'] += 1
-            self.y_true[phase]['sim'].append(y_s)
-            self.y_pred[phase]['sim'].append(np.reshape(y_s_pred, y_s.shape))
+
+        # intense inflammation loss
+        loss_ii_ce = N_SIDES * self.loss_ce_ii(y_ii_pred, y_ii)
+        loss_total = loss_total + loss_ii_ce
+        y_ii_pred = torch.softmax(y_ii_pred, dim=1).detach().cpu().numpy()
+        y_ii = y_ii.cpu().numpy()
+        self.running_loss[phase]['ii'] += loss_ii_ce
+        self.running_count[phase]['ii'] += 1
+        self.y_true[phase]['ii'].append(y_ii)
+        self.y_pred[phase]['ii'].append(y_ii_pred)
+
+        # sparcc similarity loss
+        loss_sim = self.loss_sim(y_s_pred, y_s)
+        loss_total = loss_total + self.model.lambda_s * loss_sim
+        y_s_pred = y_s_pred.detach().cpu().numpy()
+        y_s = y_s.cpu().numpy()
+        self.running_loss[phase]['sim'] += loss_sim
+        self.running_count[phase]['sim'] += 1
+        self.y_true[phase]['sim'].append(y_s)
+        self.y_pred[phase]['sim'].append(np.reshape(y_s_pred, y_s.shape))
         self.running_loss[phase]['total'] += loss_total
         self.running_count[phase]['total'] += 1
 
         return loss_total
+
+    def base_step(self, batch, batch_idx, phase='train'):
+        if self.training_mode == INFLAMMATION_MODULE:
+            return self.base_step_i(batch, batch_idx, phase=phase)
+        elif self.training_mode == INTENSE_INFLAMMATION_MODULE:
+            return self.base_step_ii(batch, batch_idx, phase=phase)
+        elif self.training_mode == SPARCC_MODULE:
+            return self.base_step_s(batch, batch_idx, phase=phase)
+        elif self.training_mode == JOINT:
+            return self.base_step_joint(batch, batch_idx, phase=phase)
 
     def training_step(self, batch, batch_idx):
         return self.base_step(batch, batch_idx, phase='train')
@@ -275,8 +409,10 @@ class SPARCC_CNN(pl.LightningModule):
                       INTENSE_INFLAMMATION_MODULE: list(self.model.feature_extractor_ii.parameters()) +
                                                    list(self.model.classifier_ii.parameters()) +
                                                    list(self.model.merge_q_module.parameters()),
+                      SPARCC_MODULE: self.model.sparcc_module.parameters(),
                       JOINT: self.model.parameters()}
-        lr = {INFLAMMATION_MODULE: self.lr, INTENSE_INFLAMMATION_MODULE: self.lr, JOINT: self.lr / 10}
+        lr = {INFLAMMATION_MODULE: self.lr, INTENSE_INFLAMMATION_MODULE: self.lr, SPARCC_MODULE: self.lr,
+              JOINT: self.lr}
         optimizer = torch.optim.Adam(parameters[self.training_mode], lr=lr[self.training_mode])
         optimizer_dict = {"optimizer": optimizer}
         # if self.scheduler_name == 'reduce_lr_on_plateau':
@@ -311,7 +447,7 @@ class SPARCC_CNN(pl.LightningModule):
                     self.log(phase + '/loss-' + case, self.running_loss[phase][case] / self.running_count[phase][case])
 
     def set_training_mode(self, mode):
-        if mode in [INFLAMMATION_MODULE, INTENSE_INFLAMMATION_MODULE, JOINT]:
+        if mode in [INFLAMMATION_MODULE, INTENSE_INFLAMMATION_MODULE, SPARCC_MODULE, JOINT]:
             self.training_mode = mode
 
     def _log_accuracy_metrics(self, y_true, y_pred, prefix='', suffix=''):

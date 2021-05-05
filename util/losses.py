@@ -30,14 +30,24 @@ class SPARCCSimilarityLoss(nn.Module):
         self.beta = beta
         self.w_sparcc = w_sparcc
 
+    # def forward(self, pred, target):
+    #
+    #     w = torch.Tensor([1] * len(target)).to(target.device)
+    #     if self.w_sparcc is not None:
+    #         w = torch.Tensor([self.w_sparcc[int(t*BINS)] for t in target]).to(target.device)
+    #
+    #     l1 = torch.abs(pred - target)
+    #     reg = _gamma_pdf(l1, self.alpha)
+    #     loss = l1 + torch.exp(- self.beta * target) * reg
+    #
+    #     return torch.sum(w * loss)
+
     def forward(self, pred, target):
 
         w = torch.Tensor([1] * len(target)).to(target.device)
         if self.w_sparcc is not None:
             w = torch.Tensor([self.w_sparcc[int(t*BINS)] for t in target]).to(target.device)
 
-        l1 = torch.abs(pred - target)
-        reg = _gamma_pdf(l1, self.alpha)
-        loss = l1 + torch.exp(- self.beta * target) * reg
+        loss = torch.abs(pred - target)
 
         return torch.sum(w * loss)
