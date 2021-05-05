@@ -1,7 +1,6 @@
 import pytorch_lightning as pl
 import os
-
-import torch
+import csv
 
 from neuralnets.networks.blocks import *
 from neuralnets.util.augmentation import *
@@ -219,16 +218,6 @@ class SPARCC_CNN_Module(nn.Module):
             # apply classifier
             y_ii = self.classifier_ii(torch.cat((f_ii, f_im), dim=1))
 
-        # compute predicted sparcc score
-        y_s = None
-        if mode == SPARCC_MODULE or mode == JOINT:
-            y_s = (torch.sum(torch.softmax(y_i, dim=1)[:, 1]) + torch.sum(torch.softmax(y_ii, dim=1)[:, 1])) / 72
-            # # reshape feature vectors
-            # f_im = f_im.view(-1, N_SLICES, N_SIDES, f_im.size(-1))
-            # f_ii = f_ii.view(-1, N_SLICES, N_SIDES, f_ii.size(-1))
-            # # compute sparcc score
-            # y_s = self.sparcc_module(f_im, f_ii)
-
         # reshape to proper format
         if mode == INFLAMMATION_MODULE:
             y_i = y_i.view(b, y_i.size(1))
@@ -238,6 +227,18 @@ class SPARCC_CNN_Module(nn.Module):
             y_i = y_i.view(b, y_i.size(1), N_SLICES, N_SIDES, N_QUARTILES)
         if mode == SPARCC_MODULE or mode == JOINT:
             y_ii = y_ii.view(b, y_ii.size(1), N_SLICES, N_SIDES)
+
+        # compute predicted sparcc score
+        y_s = None
+        if mode == SPARCC_MODULE or mode == JOINT:
+            y_i_ = torch.softmax(y_i, dim=1)[:, 1, ...].view(b, -1)
+            y_ii_ = torch.softmax(y_ii, dim=1)[:, 1, ...].view(b, -1)
+            y_s = (torch.sum(y_i_, dim=1) + torch.sum(y_ii_, dim=1)) / 72
+            # # reshape feature vectors
+            # f_im = f_im.view(-1, N_SLICES, N_SIDES, f_im.size(-1))
+            # f_ii = f_ii.view(-1, N_SLICES, N_SIDES, f_ii.size(-1))
+            # # compute sparcc score
+            # y_s = self.sparcc_module(f_im, f_ii)
 
         # output
         return y_i, y_ii, y_s
@@ -424,7 +425,7 @@ class SPARCC_CNN(pl.LightningModule):
         return optimizer_dict
 
     def on_epoch_start(self):
-        self.y_true, self.y_pred, self.running_loss, self.running_count = {}, {}, {}, {}
+        self.y_true, self.y_pred, self.running_loss, self.running_count, = {}, {}, {}, {}
         for phase in ['train', 'val', 'test']:
             self.y_true[phase], self.y_pred[phase], self.running_loss[phase], self.running_count[phase] = {}, {}, {}, {}
             for case in ['i', 'di', 'ii', 'sim', 'total']:
@@ -439,6 +440,8 @@ class SPARCC_CNN(pl.LightningModule):
                         self._log_regression_metrics(np.concatenate(self.y_true[phase][case]),
                                                      np.concatenate(self.y_pred[phase][case]),
                                                      prefix=phase + '/' + case + '-')
+                        self._write_sparcc_results(np.concatenate(self.y_true[phase][case]),
+                                                   np.concatenate(self.y_pred[phase][case]), prefix=phase + '/')
                     else:
                         self._log_accuracy_metrics(np.concatenate(self.y_true[phase][case]),
                                                    np.concatenate(self.y_pred[phase][case]),
@@ -449,6 +452,24 @@ class SPARCC_CNN(pl.LightningModule):
     def set_training_mode(self, mode):
         if mode in [INFLAMMATION_MODULE, INTENSE_INFLAMMATION_MODULE, SPARCC_MODULE, JOINT]:
             self.training_mode = mode
+
+    def _write_sparcc_results(self, y_true, y_pred, prefix=''):
+
+        # convert to points
+        y_true = y_true * 72
+        y_pred = y_pred * 72
+        err = np.abs(y_true - y_pred)
+
+        # write CSV file
+        log_dir = self.logger.log_dir
+        mkdir(os.path.join(log_dir, os.path.dirname(prefix)))
+        filename = os.path.join(log_dir, prefix + str(self.global_step) + '.csv')
+        with open(filename, mode='w') as f:
+            writer = csv.writer(f, delimiter=',', quotechar='"', quoting=csv.QUOTE_MINIMAL)
+            writer.writerow(['SPARCC scores', ''])
+            writer.writerow(['Target', 'Predicted', 'Error'])
+            for i in range(len(y_true)):
+                writer.writerow([int(y_true[i]), int(y_pred[i]), float(err[i])])
 
     def _log_accuracy_metrics(self, y_true, y_pred, prefix='', suffix=''):
 
