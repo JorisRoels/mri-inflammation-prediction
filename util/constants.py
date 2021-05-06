@@ -118,8 +118,8 @@ CNN_ACTIVATION = 'relu'
 
 # supported backbones
 BACKBONES = {'AlexNet': models.alexnet,
-             'VGG11': models.vgg11_bn,
-             'VGG16': models.vgg16_bn,
+             'VGG11': models.vgg11,
+             'VGG16': models.vgg16,
              'ResNet18': models.resnet18,
              'ResNet101': models.resnet101,
              'ResNeXt101': models.resnext101_32x8d,
