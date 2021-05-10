@@ -9,12 +9,66 @@ from neuralnets.util.io import print_frm, read_volume, mkdir
 from neuralnets.data.base import slice_subset, _len_epoch
 from neuralnets.data.datasets import split_segmentation_transforms
 from neuralnets.networks.unet import UNet2D
+from sklearn.decomposition import PCA
 
 from effdet import create_model
 from timm.models.layers import set_layer_config
 
 from util.constants import *
 from util.tools import load, delinearize_index
+
+
+class SPARCCRegressionDataset(data.Dataset):
+    """
+    Dataset that returns feature vectors and corresponding SPARCC scores
+
+    :param f_i: inflammation feature vectors
+    :param f_ii: intense inflammation feature vectors
+    :param y: SPARCC scores
+    :param optional f_red: target feature dimension (T-SNE dimensionality reduction will be applied if this is set)
+    """
+
+    def __init__(self, f_i, f_ii, y, f_red=None):
+
+        # save features and scores
+        self.f_i = f_i
+        self.f_ii = f_ii
+        self.y = y
+
+        # normalize data
+        self.f_i -= np.mean(self.f_i)
+        self.f_i /= np.std(self.f_i)
+        self.f_ii -= np.mean(self.f_ii)
+        self.f_ii /= np.std(self.f_ii)
+
+        # get dimensions
+        self.n_samples, self.n_i, self.f_dim = self.f_i.shape
+        _, self.n_ii, _ = self.f_ii.shape
+
+        # reduce dimensionality if necessary
+        if f_red is not None:
+            self.f_red = f_red
+
+            # inflammation features
+            f_i = np.reshape(self.f_i, (-1, self.f_dim))
+            f_i = PCA(n_components=f_red).fit_transform(f_i)
+            f_i = np.reshape(f_i, (self.n_samples, self.n_i, self.f_red))
+            self.f_i = f_i
+
+            # intense inflammation features
+            f_ii = np.reshape(self.f_ii, (-1, self.f_dim))
+            f_ii = PCA(n_components=f_red).fit_transform(f_ii)
+            f_ii = np.reshape(f_ii, (self.n_samples, self.n_ii, self.f_red))
+            self.f_ii = f_ii
+
+            # update feature vector dimension
+            self.f_dim = f_red
+
+    def __getitem__(self, i):
+        return self.f_i[i], self.f_ii[i], self.y[i]
+
+    def __len__(self):
+        return self.n_samples
 
 
 class SPARCCDataset(data.Dataset):
@@ -32,10 +86,12 @@ class SPARCCDataset(data.Dataset):
                     - INFLAMMATION_MODULE: [CHANNELS, QUARTILE_SIZE, QUARTILE_SIZE]
                     - INTENSE_INFLAMMATION_MODULE: [CHANNELS, N_QUARTILES, QUARTILE_SIZE, QUARTILE_SIZE]
                     - JOINT/SPARCC_MODULE: [CHANNELS, N_SLICES, N_SIDES, N_QUARTILES, QUARTILE_SIZE, QUARTILE_SIZE]
+    :param optional preprocess_transform: augmentation transformer that is applied as a preprocessing on the original
+                                          slices
     """
 
     def __init__(self, data_path, si_joint_model, illum_model, sacrum_model, range_split=(0, 1),
-                 transform=None, seed=0, mode=JOINT):
+                 transform=None, seed=0, mode=JOINT, preprocess_transform=None, apply_weighting=True):
         self.data_path = data_path
         self.si_joint_model = si_joint_model
         self.illum_model = illum_model
@@ -44,6 +100,8 @@ class SPARCCDataset(data.Dataset):
         self.transform = transform
         self.seed = seed
         self.mode = mode
+        self.preprocess_transform = preprocess_transform
+        self.apply_weighting = apply_weighting
 
         # load all necessary files
         self.scores = load(os.path.join(data_path, SCORES_PP_FILE))
@@ -67,6 +125,11 @@ class SPARCCDataset(data.Dataset):
         self.t1_slices = self._extract_slices(self.t1_data, self.slicenumbers[1])
         self.t2_slices = self._extract_slices(self.t2_data, self.slicenumbers[0],
                                               target_size=self.t1_slices[0].shape[1:])
+
+        # augmentation on slice level if necessary
+        if self.preprocess_transform is not None:
+            self.scores, self.slicenumbers, self.t1_slices, self.t2_slices = \
+                self._augment_slices(self.scores, self.slicenumbers, self.t1_slices, self.t2_slices)
 
         # pre-compute SI joint locations and illium/sacrum segmentations
         SI_JOINTS_TMP_FILE = os.path.join(CACHE_DIR, '%s_%d_%d.%s' % (SI_JOINTS_TMP, start, stop, EXT))
@@ -107,8 +170,9 @@ class SPARCCDataset(data.Dataset):
         self.std.append(self.weights.std())
 
         # apply weighting
-        for c in range(self.quartiles.shape[1]):
-            self.quartiles[:, c, ...] = self.quartiles[:, c, ...] * self.weights
+        if apply_weighting:
+            for c in range(self.quartiles.shape[1]):
+                self.quartiles[:, c, ...] = self.quartiles[:, c, ...] * self.weights
 
         # extract scores
         self.q_scores, self.s_scores_i, self.s_scores_d, self.sparcc = self._extract_scores(self.scores)
@@ -155,6 +219,64 @@ class SPARCCDataset(data.Dataset):
             return self.quartiles.shape[0] * self.quartiles.shape[2] * self.quartiles.shape[3]
         else:
             return self.quartiles.shape[0]
+
+    def _augment_slices(self, scores, slicenumbers, t1_data, t2_data):
+
+        n = len(t1_data)
+        transform = self.preprocess_transform
+        print_frm('Augmenting slices...')
+        ds1 = []
+        ds2 = []
+        for i in tqdm(range(n), desc='Augmenting slices'):
+
+            # get the data
+            x_t1 = t1_data[i]
+            x_t2 = t2_data[i]
+            sn1, sn2 = slicenumbers[0][i], slicenumbers[1][i]
+            score = tuple([s[i] for s in scores])
+
+            # reshape to appropriate size
+            n_slices, sz_orig, _ = x_t2.shape
+            x = np.concatenate((x_t1, x_t2), axis=0, dtype=float)
+
+            # augment sample
+            data_t1 = []
+            data_t2 = []
+            for j in range(REPS):
+
+                # score invariant augmentation
+                x_ = transform(x)
+                x_t1_, x_t2_ = x_[:n_slices], x[n_slices:]
+
+                score_ = score
+                if np.random.rand() < 0.5:
+                    # apply flip
+                    x_t1_ = x_t1_[:, :, ::-1]
+                    x_t2_ = x_t2_[:, :, ::-1]
+
+                    # adjust scores (flip sides)
+                    for k in range(len(score_)):
+                        s_tmp = score_[k][:, 0].copy()
+                        score_[k][:, 0] = score_[k][:, 1]
+                        score_[k][:, 1] = s_tmp
+
+                # extend data
+                data_t1.append(np.maximum(0, x_t1_).astype('uint16'))
+                data_t2.append(np.maximum(0, x_t2_).astype('uint16'))
+                for k in range(len(scores)):
+                    scores[k].append(score_[k])
+                slicenumbers[0].append(sn1)
+                slicenumbers[1].append(sn2)
+
+            # append data
+            ds1.append(np.asarray(data_t1, dtype='uint16'))
+            ds2.append(np.asarray(data_t2, dtype='uint16'))
+
+        # concatenate data
+        t1_data = np.concatenate([t1_data, *ds1], axis=0)
+        t2_data = np.concatenate([t2_data, *ds2], axis=0)
+
+        return scores, slicenumbers, t1_data, t2_data
 
     def _shuffle_data(self):
         np.random.seed(self.seed)

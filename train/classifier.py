@@ -22,6 +22,8 @@ def _train_module(net, train_data, val_data, args, mode=JOINT, monitor='val/sim-
 
     train_data.mode = mode
     val_data.mode = mode
+    if mode == SPARCC_MODULE or mode == JOINT:
+        train_data.transform = None
     train_loader = DataLoader(train_data, batch_size=factor[mode]*args.train_batch_size, num_workers=args.num_workers,
                               pin_memory=True, shuffle=True)
     val_loader = DataLoader(val_data, batch_size=factor[mode]*args.test_batch_size, num_workers=args.num_workers,
@@ -97,7 +99,6 @@ if __name__ == '__main__':
     split = args.train_val_test_split
     transform = Compose([Rotate90(), Flip(prob=0.5, dim=0), Flip(prob=0.5, dim=1), RandomDeformation(),
                          AddNoise(sigma_max=0.05)])
-    # transform = None
     train = SPARCCDataset(args.data_dir, args.si_joint_model, args.model_checkpoint_illium,
                           args.model_checkpoint_sacrum, range_split=(0, split[0]), transform=transform, seed=args.seed,
                           mode=INFLAMMATION_MODULE)

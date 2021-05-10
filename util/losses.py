@@ -1,14 +1,13 @@
 import torch
 import torch.nn as nn
-from torch import lgamma
 
 from util.constants import *
 
+eps = 1e-5
 
-def _gamma_pdf(x, alpha):
-    g = torch.exp(lgamma(torch.ones_like(x) * alpha))
-    g = (torch.pow(x, alpha - 1) * torch.exp(- x)) / g
-    return g
+
+def inv_gaussian(x, l=0.2, m=5):
+    return torch.sqrt(l / (2 * np.pi * (x+eps)**3)) * torch.exp(- (l * (x - m)**2) / (2 * m**2 * (x+eps)))
 
 
 class SPARCCSimilarityLoss(nn.Module):
@@ -23,24 +22,12 @@ class SPARCCSimilarityLoss(nn.Module):
     :return: SPARCC similarity loss
     """
 
-    def __init__(self, alpha=1.3, beta=5, w_sparcc=None):
+    def __init__(self, alpha=0.05, beta=10, w_sparcc=None):
         super(SPARCCSimilarityLoss, self).__init__()
 
         self.alpha = alpha
         self.beta = beta
         self.w_sparcc = w_sparcc
-
-    # def forward(self, pred, target):
-    #
-    #     w = torch.Tensor([1] * len(target)).to(target.device)
-    #     if self.w_sparcc is not None:
-    #         w = torch.Tensor([self.w_sparcc[int(t*BINS)] for t in target]).to(target.device)
-    #
-    #     l1 = torch.abs(pred - target)
-    #     reg = _gamma_pdf(l1, self.alpha)
-    #     loss = l1 + torch.exp(- self.beta * target) * reg
-    #
-    #     return torch.sum(w * loss)
 
     def forward(self, pred, target):
 
@@ -49,5 +36,7 @@ class SPARCCSimilarityLoss(nn.Module):
             w = torch.Tensor([self.w_sparcc[int(t*BINS)] for t in target]).to(target.device)
 
         loss = torch.abs(pred - target)
+        # reg = inv_gaussian(loss)
+        # loss = loss + self.alpha * torch.exp(- self.beta * target) * reg
 
         return torch.sum(w * loss)

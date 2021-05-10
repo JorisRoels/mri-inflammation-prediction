@@ -12,6 +12,59 @@ from util.losses import SPARCCSimilarityLoss
 from util.tools import scores, save, mae
 
 
+class SPARCC_Regression_Module(nn.Module):
+    """
+    Transforms a set of I and II feature vectors into a SPARCC score
+    """
+
+    def __init__(self, f_dim=512, f_hidden=128):
+        super().__init__()
+
+        p = 0.1
+
+        self.i_module = nn.Sequential(
+            nn.Linear(N_SLICES * N_SIDES * N_QUARTILES * f_dim, f_hidden),
+            nn.Dropout(p=p),
+            nn.ReLU()
+        )
+        self.ii_module = nn.Sequential(
+            nn.Linear(N_SLICES * N_SIDES * f_dim, f_hidden),
+            nn.Dropout(p=p),
+            nn.ReLU()
+        )
+        self.merge_module = nn.Sequential(
+            # nn.Dropout(p=p),
+            nn.Linear(2 * f_hidden, 1),
+            nn.Sigmoid()
+        )
+
+    def forward(self, f_i, f_ii):
+        """
+        Perform forward propagation of the module
+
+        :param f_i: the inflammation feature vector that originates from the I feature extractor
+                    should have shape [B, N_SLICES, N_SIDES, N_QUARTILES, F_DIM]
+        :param f_ii: the intense inflammation feature vector that originates from the II feature extractor
+                     should have shape [B, N_SLICES, N_SIDES, F_DIM]
+        :return: output of the module y, i.e. the sparcc score [B]
+        """
+
+        b = f_i.size(0)
+
+        # reshape to appropriate siz
+        f_i = f_i.view(b, -1)
+        f_ii = f_ii.view(b, -1)
+
+        # propagate first module to reduce dimensionality
+        f_i = self.i_module(f_i)
+        f_ii = self.ii_module(f_ii)
+
+        # concatenate processed features and compute sparcc score
+        y = self.merge_module(torch.cat((f_i, f_ii), dim=1)).view(f_i.size(0))
+
+        return y
+
+
 class SPARCC_Linear_Module(nn.Module):
     """
     Transforms a set of I and II feature vectors into a SPARCC score
@@ -179,7 +232,7 @@ class SPARCC_CNN_Module(nn.Module):
         :param x: the input, format depends on the training mode:
                     - INFLAMMATION_MODULE: [B, CHANNELS, QUARTILE_SIZE, QUARTILE_SIZE]
                     - INTENSE_INFLAMMATION_MODULE: [B, CHANNELS, N_QUARTILES, QUARTILE_SIZE, QUARTILE_SIZE]
-                    - JOINT: [B, CHANNELS, N_SLICES, N_SIDES, N_QUARTILES, QUARTILE_SIZE, QUARTILE_SIZE]
+                    - JOINT or SPARCC_MODULE: [B, CHANNELS, N_SLICES, N_SIDES, N_QUARTILES, QUARTILE_SIZE, QUARTILE_SIZE]
         :param mode: training mode:
                     - INFLAMMATION_MODULE: trains the inflammation classfier alone
                     - INTENSE_INFLAMMATION_MODULE: trains both the inflammation and intense inflammation classifier
@@ -242,6 +295,118 @@ class SPARCC_CNN_Module(nn.Module):
 
         # output
         return y_i, y_ii, y_s
+
+
+class SPARCC_MLP(pl.LightningModule):
+
+    def __init__(self, f_dim=512, f_hidden=128, lr=1e-3, w_sparcc=None):
+        super().__init__()
+
+        # define model
+        self.model = SPARCC_Regression_Module(f_dim=f_dim, f_hidden=f_hidden)
+
+        # define loss function
+        self.loss_sim = SPARCCSimilarityLoss(w_sparcc=w_sparcc)
+        # self.loss_sim = nn.MSELoss()
+        self.lr = lr
+
+    def forward(self, fi, f_ii):
+
+        return self.model(fi, f_ii)
+
+    def base_step(self, batch, batch_idx, phase='train'):
+
+        # transfer to suitable device and get labels
+        f_i, f_ii, y_s = batch
+        f_i = f_i.float()
+        f_ii = f_ii.float()
+        y_s = y_s.float()
+
+        # forward prop
+        y_s_pred = self(f_i, f_ii)
+
+        # compute loss and log output
+        loss = self.loss_sim(y_s_pred, y_s)
+        y_s = y_s.cpu().numpy()
+        y_s_pred = y_s_pred.detach().cpu().numpy()
+        self.y_true[phase].append(y_s)
+        self.y_pred[phase].append(y_s_pred)
+        self.running_loss[phase] += loss.detach().cpu().numpy()
+        self.running_count[phase] += 1
+
+        return loss
+
+    def training_step(self, batch, batch_idx):
+        return self.base_step(batch, batch_idx, phase='train')
+
+    def validation_step(self, batch, batch_idx):
+        return self.base_step(batch, batch_idx, phase='val')
+
+    def test_step(self, batch, batch_idx):
+        return self.base_step(batch, batch_idx, phase='test')
+
+    def configure_optimizers(self):
+        optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr)
+        optimizer_dict = {"optimizer": optimizer}
+        # if self.scheduler_name == 'reduce_lr_on_plateau':
+        #     scheduler = ReduceLROnPlateau(optimizer, 'max', patience=self.step_size, factor=self.gamma)
+        #     optimizer_dict.update({"lr_scheduler": scheduler, "monitor": 'val/mIoU'})
+        # elif self.scheduler_name == 'step_lr':
+        #     scheduler = StepLR(optimizer, step_size=self.step_size, gamma=self.gamma)
+        #     optimizer_dict.update({"lr_scheduler": scheduler})
+        return optimizer_dict
+
+    def on_epoch_start(self):
+        self.y_true, self.y_pred, self.running_loss, self.running_count, = {}, {}, {}, {}
+        for phase in ['train', 'val', 'test']:
+            self.y_true[phase], self.y_pred[phase] = [], []
+            self.running_loss[phase], self.running_count[phase] = 0, 0
+
+    def on_epoch_end(self):
+        for phase in ['train', 'val', 'test']:
+            if len(self.y_true[phase]) > 0:
+                    self._log_regression_metrics(np.concatenate(self.y_true[phase]), np.concatenate(self.y_pred[phase]),
+                                                 prefix=phase + '/')
+                    self._write_sparcc_results(np.concatenate(self.y_true[phase]), np.concatenate(self.y_pred[phase]),
+                                               prefix=phase + '/')
+            if self.running_count[phase] > 0:
+                self.log(phase + '/loss', self.running_loss[phase] / self.running_count[phase])
+
+    def _write_sparcc_results(self, y_true, y_pred, prefix=''):
+
+        # convert to points
+        y_true = y_true * 72
+        y_pred = y_pred * 72
+        err = np.abs(y_true - y_pred)
+
+        # write CSV file
+        log_dir = self.logger.log_dir
+        mkdir(os.path.join(log_dir, os.path.dirname(prefix)))
+        filename = os.path.join(log_dir, prefix + str(self.global_step) + '.csv')
+        with open(filename, mode='w') as f:
+            writer = csv.writer(f, delimiter=',', quotechar='"', quoting=csv.QUOTE_MINIMAL)
+            writer.writerow(['SPARCC scores', ''])
+            writer.writerow(['Target', 'Predicted', 'Error'])
+            for i in range(len(y_true)):
+                writer.writerow([int(y_true[i]), int(y_pred[i]), float(err[i])])
+
+    def _log_regression_metrics(self, y_true, y_pred, prefix='', suffix=''):
+
+        # flatten everything
+        y_pred = y_pred.flatten()
+        y_true = y_true.flatten()
+
+        # compute scores
+        m = mae(y_true, y_pred)
+
+        # log scores
+        self.log(prefix + 'mae' + suffix, m)
+
+        # # save results
+        # log_dir = self.logger.log_dir
+        # results = {'mae': m}
+        # mkdir(os.path.join(log_dir, os.path.dirname(prefix)))
+        # save(results, os.path.join(log_dir, prefix + str(self.global_step) + '.pickle'))
 
 
 class SPARCC_CNN(pl.LightningModule):

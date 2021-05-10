@@ -97,7 +97,7 @@ N_QUARTILES = 4
 Q_L = 64
 Q_D = 10
 
-CACHE_DIR = '/home/jorisro/.cache/mri'
+CACHE_DIR = '/home/jorisro/research/mri-inflammation-prediction/.cache/mri'
 SI_JOINTS_TMP = 'si_joints'
 SEG_I_TMP = 'seg_i'
 SEG_S_TMP = 'seg_s'
@@ -140,3 +140,5 @@ SPARCC_MODULE = 'sparcc-module'
 JOINT = 'joint'
 
 BINS = 50
+
+REPS = 5
