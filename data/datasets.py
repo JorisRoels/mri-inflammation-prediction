@@ -26,14 +26,16 @@ class SPARCCRegressionDataset(data.Dataset):
     :param f_ii: intense inflammation feature vectors
     :param y: SPARCC scores
     :param optional f_red: target feature dimension (T-SNE dimensionality reduction will be applied if this is set)
+    :param optional categories: list of thresholds that define a discrete set of categories
     """
 
-    def __init__(self, f_i, f_ii, y, f_red=None):
+    def __init__(self, f_i, f_ii, y, f_red=None, categories=None):
 
         # save features and scores
         self.f_i = f_i
         self.f_ii = f_ii
         self.y = y
+        self.categories = categories
 
         # normalize data
         self.f_i -= np.mean(self.f_i)
@@ -64,6 +66,22 @@ class SPARCCRegressionDataset(data.Dataset):
             # update feature vector dimension
             self.f_dim = f_red
 
+        # discretize to categories if necessary
+        if categories is not None:
+            y_ = np.zeros_like(self.y, dtype=int)
+            for i in range(len(y_)):
+                j = 0
+                while j < len(categories):
+                    if self.y[i] < categories[j]:
+                        y_[i] = j
+                        j = len(categories) + 1
+                    else:
+                        j += 1
+                if j == len(categories):
+                    y_[i] = len(categories)
+            self.y = y_
+
+
     def __getitem__(self, i):
         return self.f_i[i], self.f_ii[i], self.y[i]
 
@@ -88,6 +106,7 @@ class SPARCCDataset(data.Dataset):
                     - JOINT/SPARCC_MODULE: [CHANNELS, N_SLICES, N_SIDES, N_QUARTILES, QUARTILE_SIZE, QUARTILE_SIZE]
     :param optional preprocess_transform: augmentation transformer that is applied as a preprocessing on the original
                                           slices
+    :param optional apply_weighting: apply roi weighting or not
     """
 
     def __init__(self, data_path, si_joint_model, illum_model, sacrum_model, range_split=(0, 1),
@@ -322,14 +341,15 @@ class SPARCCDataset(data.Dataset):
     def _filter_bboxes(self, bboxes, sz):
 
         x_max, y_max = sz
+        q = int(np.sqrt(2) * (Q_L + 2*Q_D))
 
         left_bboxes = []
         right_bboxes = []
         for bbox in bboxes:
             x, y, x_, y_ = bbox[:4]
-            if x > x_max // 2 and x_ < x_max and y >= 0 and y_ < y_max:
+            if x > x_max // 2 and x_ < (x_max - q) and y >= 0 and y_ < (y_max - q):
                 left_bboxes.append(bbox)
-            elif x < x_max // 2 and x_ >= 0 and y >= 0 and y_ < y_max:
+            elif x < x_max // 2 and x_ >= 0 and y >= 0 and y_ < (y_max - q):
                 right_bboxes.append(bbox)
 
         return np.asarray(left_bboxes), np.asarray(right_bboxes)
