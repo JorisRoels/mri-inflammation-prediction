@@ -340,16 +340,37 @@ class SPARCCDataset(data.Dataset):
 
     def _filter_bboxes(self, bboxes, sz):
 
-        x_max, y_max = sz
-        q = int(np.sqrt(2) * (Q_L + 2*Q_D))
+        def bbox_is_left(bbox, sz):
+            x_max, y_max = sz
+            x, y, x_, y_ = bbox[:4]
+            return x > x_max // 2 and x_ < x_max and y >= 0 and y_ < y_max
 
+        def quartiles_exceed_edges_left(bbox, q, sz):
+            x_max, y_max = sz
+            x, y, x_, y_ = bbox[:4]
+            x_j = (x + x_) // 2
+            y_j = (y + y_) // 2
+            return x_j + q > x_max or y_j - q < 0 or y_j + q > y_max
+
+        def bbox_is_right(bbox, sz):
+            x_max, y_max = sz
+            x, y, x_, y_ = bbox[:4]
+            return x < x_max // 2 and x_ >= 0 and y >= 0 and y_ < y_max
+
+        def quartiles_exceed_edges_right(bbox, q, sz):
+            x_max, y_max = sz
+            x, y, x_, y_ = bbox[:4]
+            x_j = (x + x_) // 2
+            y_j = (y + y_) // 2
+            return x_j - q < 0 or y_j - q < 0 or y_j + q > y_max
+
+        q = int(np.sqrt(2) * (Q_L + 2*Q_D))
         left_bboxes = []
         right_bboxes = []
         for bbox in bboxes:
-            x, y, x_, y_ = bbox[:4]
-            if x > x_max // 2 and x_ < (x_max - q) and y >= 0 and y_ < (y_max - q):
+            if bbox_is_left(bbox[:4], sz) and not quartiles_exceed_edges_left(bbox[:4], q, sz):
                 left_bboxes.append(bbox)
-            elif x < x_max // 2 and x_ >= 0 and y >= 0 and y_ < (y_max - q):
+            elif bbox_is_right(bbox[:4], sz) and not quartiles_exceed_edges_right(bbox[:4], q, sz):
                 right_bboxes.append(bbox)
 
         return np.asarray(left_bboxes), np.asarray(right_bboxes)
