@@ -373,7 +373,10 @@ class SPARCCDataset(data.Dataset):
             elif bbox_is_right(bbox[:4], sz) and not quartiles_exceed_edges_right(bbox[:4], q, sz):
                 right_bboxes.append(bbox)
 
-        return np.asarray(left_bboxes), np.asarray(right_bboxes)
+        left_bboxes = np.reshape(np.asarray(left_bboxes), (-1, 6))
+        right_bboxes = np.reshape(np.asarray(right_bboxes), (-1, 6))
+
+        return left_bboxes, right_bboxes
 
     def _maximize_bbox_score(self, bboxes):
 
