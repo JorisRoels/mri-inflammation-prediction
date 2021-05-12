@@ -15,7 +15,7 @@ from effdet import create_model
 from timm.models.layers import set_layer_config
 
 from util.constants import *
-from util.tools import load, delinearize_index
+from util.tools import load, save, delinearize_index
 
 
 class SPARCCRegressionDataset(data.Dataset):
@@ -152,8 +152,22 @@ class SPARCCDataset(data.Dataset):
         if self.preprocess_transform is not None:
             print_frm('    Augmenting slices...')
             c_dir = CACHE_DIR + '-augmented'
-            self.scores, self.slicenumbers, self.t1_slices, self.t2_slices = \
-                self._augment_slices(self.scores, self.slicenumbers, self.t1_slices, self.t2_slices)
+            if not os.path.exists(os.path.join(c_dir, SCORES_PP_FILE)) or \
+                not os.path.exists(os.path.join(c_dir, SLICENUMBERS_PP_FILE)) or \
+                not os.path.exists(os.path.join(c_dir, T1_PP_FILE)) or \
+                not os.path.exists(os.path.join(c_dir, T2_PP_FILE)):
+                self.scores, self.slicenumbers, self.t1_slices, self.t2_slices = \
+                    self._augment_slices(self.scores, self.slicenumbers, self.t1_slices, self.t2_slices)
+                print_frm('    Saving augmented slices...')
+                save(self.scores, os.path.join(c_dir, SCORES_PP_FILE))
+                save(self.slicenumbers, os.path.join(c_dir, SLICENUMBERS_PP_FILE))
+                save(self.t1_data, os.path.join(c_dir, T1_PP_FILE))
+                save(self.t2_data, os.path.join(c_dir, T2_PP_FILE))
+            else:
+                self.scores = load(os.path.join(c_dir, SCORES_PP_FILE))
+                self.slicenumbers = load(os.path.join(c_dir, SLICENUMBERS_PP_FILE))
+                self.t1_data = load(os.path.join(c_dir, T1_PP_FILE))
+                self.t2_data = load(os.path.join(c_dir, T2_PP_FILE))
 
         # pre-compute SI joint locations and illium/sacrum segmentations
         SI_JOINTS_TMP_FILE = os.path.join(c_dir, '%s_%d_%d.%s' % (SI_JOINTS_TMP, start, stop, EXT))
@@ -398,26 +412,33 @@ class SPARCCDataset(data.Dataset):
 
         return bboxes[i_max]
 
-    def _correct_bboxes(self, bbox, bbox_l_found, bbox_r_found):
+    def _post_process_joint_bboxes(self, boxes):
 
-        def _correct_bbox_side(bbox, s, c):
-            for c in range(4):
-                m_n = bbox[:, s, c] < 0
-                m_p = bbox[:, s, c] >= 0
-                med = np.median(bbox[:, s, c][m_p])
-                bbox[:, s, c][m_n] = med
-            return bbox
+        n, n_slices, n_sides, n_coos = boxes.shape
 
-        if not bbox_l_found:
-            for c in range(4):
-                bbox = _correct_bbox_side(bbox, 0, c)
+        # fix unknown detections
+        boxes_new = np.zeros_like(boxes)
+        bbox_med = np.zeros((n, n_sides, n_coos))
+        for i in range(n):
+            for j in range(n_sides):
+                for k in range(n_coos):
+                    c = boxes[i, :, j, k]
+                    c_pos = c[c >= 0]
+                    bbox_med[i, j, k] = np.median(c_pos)
+                    boxes_new[i, :, j, k][c >= 0] = c_pos
+                    boxes_new[i, :, j, k][c < 0] = bbox_med[i, j, k]
 
-        if not bbox_r_found:
-            for c in range(4):
-                bbox = _correct_bbox_side(bbox, 1, c)
+        # fix detections that are too far away from the median
+        for i in range(n):
+            for k in range(n_sides):
+                j_med = (bbox_med[i, k, :2] + bbox_med[i, k, 2:4]) / 2
+                for j in range(n_slices):
+                    j_pred = (boxes_new[i, j, k, :2] + boxes_new[i, j, k, 2:4]) / 2
+                    d = np.sqrt(np.sum((j_med - j_pred)**2))
+                    if d > MEDIAN_THRESHOLD:
+                        boxes_new[i, j, k, :] = bbox_med[i, k, :]
 
-        
-        return bbox
+        return boxes
 
     def _compute_joints(self, data, model, out_file=None):
 
@@ -458,34 +479,6 @@ class SPARCCDataset(data.Dataset):
             np.save(out_file, bboxes)
 
         return bboxes
-
-    def _post_process_joint_bboxes(self, boxes):
-
-        n, n_slices, n_sides, n_coos = boxes.shape
-
-        # fix unknown detections
-        boxes_new = np.zeros_like(boxes)
-        bbox_med = np.zeros((n, n_sides, n_coos))
-        for i in range(n):
-            for j in range(n_sides):
-                for k in range(n_coos):
-                    c = boxes[i, :, j, k]
-                    c_pos = c[c >= 0]
-                    bbox_med[i, j, k] = np.median(c_pos)
-                    boxes_new[i, :, j, k][c >= 0] = c_pos
-                    boxes_new[i, :, j, k][c < 0] = bbox_med[i, j, k]
-
-        # fix detections that are too far away from the median
-        for i in range(n):
-            for k in range(n_sides):
-                j_med = (bbox_med[i, k, :2] + bbox_med[i, k, 2:4]) / 2
-                for j in range(n_slices):
-                    j_pred = (boxes_new[i, j, k, :2] + boxes_new[i, j, k, 2:4]) / 2
-                    d = np.sqrt(np.sum((j_med - j_pred)**2))
-                    if d > MEDIAN_THRESHOLD:
-                        boxes_new[i, j, k, :] = bbox_med[i, k, :]
-
-        return boxes
 
     def _compute_segmentation(self, data, model, out_file=None):
 
