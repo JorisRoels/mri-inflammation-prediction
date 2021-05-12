@@ -142,3 +142,5 @@ JOINT = 'joint'
 BINS = 50
 
 REPS = 5
+
+MEDIAN_THRESHOLD = 75

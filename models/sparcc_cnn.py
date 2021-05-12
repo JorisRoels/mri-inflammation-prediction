@@ -2,25 +2,29 @@ import pytorch_lightning as pl
 import os
 import csv
 
+import torch
+import torch.nn.functional as F
+
 from neuralnets.networks.blocks import *
 from neuralnets.util.augmentation import *
 from neuralnets.util.io import mkdir
-from sklearn.metrics import roc_auc_score
+from sklearn.metrics import roc_auc_score, accuracy_score, balanced_accuracy_score
 
 from util.constants import *
 from util.losses import SPARCCSimilarityLoss
 from util.tools import scores, save, mae
 
 
-class SPARCC_Regression_Module(nn.Module):
+class SPARCC_Prediction_Module(nn.Module):
     """
     Transforms a set of I and II feature vectors into a SPARCC score
     """
 
-    def __init__(self, f_dim=512, f_hidden=128):
+    def __init__(self, f_dim=512, f_hidden=128, n_classes=1):
         super().__init__()
 
-        p = 0.1
+        p = 0.50
+        self.n_classes = n_classes
 
         self.i_module = nn.Sequential(
             nn.Linear(N_SLICES * N_SIDES * N_QUARTILES * f_dim, f_hidden),
@@ -32,11 +36,16 @@ class SPARCC_Regression_Module(nn.Module):
             nn.Dropout(p=p),
             nn.ReLU()
         )
-        self.merge_module = nn.Sequential(
-            # nn.Dropout(p=p),
-            nn.Linear(2 * f_hidden, 1),
-            nn.Sigmoid()
-        )
+        if n_classes == 1:
+            self.merge_module = nn.Sequential(
+                nn.Linear(2 * f_hidden, n_classes),
+                nn.Sigmoid()
+            )
+        else:
+            self.merge_module = nn.Sequential(
+                # nn.Dropout(p=p),
+                nn.Linear(2 * f_hidden, n_classes)
+            )
 
     def forward(self, f_i, f_ii):
         """
@@ -60,7 +69,9 @@ class SPARCC_Regression_Module(nn.Module):
         f_ii = self.ii_module(f_ii)
 
         # concatenate processed features and compute sparcc score
-        y = self.merge_module(torch.cat((f_i, f_ii), dim=1)).view(f_i.size(0))
+        y = self.merge_module(torch.cat((f_i, f_ii), dim=1))
+        if self.n_classes == 1:
+            y = y.view(f_i.size(0))
 
         return y
 
@@ -299,15 +310,21 @@ class SPARCC_CNN_Module(nn.Module):
 
 class SPARCC_MLP(pl.LightningModule):
 
-    def __init__(self, f_dim=512, f_hidden=128, lr=1e-3, w_sparcc=None):
+    def __init__(self, f_dim=512, f_hidden=128, lr=1e-3, w_sparcc=None, categories=None):
         super().__init__()
 
         # define model
-        self.model = SPARCC_Regression_Module(f_dim=f_dim, f_hidden=f_hidden)
+        if categories is not None:
+            self.n_classes = len(categories) + 1
+        else:
+            self.n_classes = 1
+
+        self.model = SPARCC_Prediction_Module(f_dim=f_dim, f_hidden=f_hidden, n_classes=self.n_classes)
 
         # define loss function
-        self.loss_sim = SPARCCSimilarityLoss(w_sparcc=w_sparcc)
+        # self.loss_sim = SPARCCSimilarityLoss(w_sparcc=w_sparcc)
         # self.loss_sim = nn.MSELoss()
+        self.loss_sim = nn.CrossEntropyLoss(weight=torch.Tensor(w_sparcc).to('cuda:0'))
         self.lr = lr
 
     def forward(self, fi, f_ii):
@@ -320,7 +337,10 @@ class SPARCC_MLP(pl.LightningModule):
         f_i, f_ii, y_s = batch
         f_i = f_i.float()
         f_ii = f_ii.float()
-        y_s = y_s.float()
+        if self.n_classes == 1:
+            y_s = y_s.float()
+        else:
+            y_s = y_s.long()
 
         # forward prop
         y_s_pred = self(f_i, f_ii)
@@ -328,7 +348,10 @@ class SPARCC_MLP(pl.LightningModule):
         # compute loss and log output
         loss = self.loss_sim(y_s_pred, y_s)
         y_s = y_s.cpu().numpy()
-        y_s_pred = y_s_pred.detach().cpu().numpy()
+        if self.n_classes == 1:
+            y_s_pred = y_s_pred.detach().cpu().numpy()
+        else:
+            y_s_pred = torch.argmax(F.softmax(y_s_pred, dim=1), dim=1).detach().cpu().numpy()
         self.y_true[phase].append(y_s)
         self.y_pred[phase].append(y_s_pred)
         self.running_loss[phase] += loss.detach().cpu().numpy()
@@ -365,7 +388,7 @@ class SPARCC_MLP(pl.LightningModule):
     def on_epoch_end(self):
         for phase in ['train', 'val', 'test']:
             if len(self.y_true[phase]) > 0:
-                    self._log_regression_metrics(np.concatenate(self.y_true[phase]), np.concatenate(self.y_pred[phase]),
+                    self._log_prediction_metrics(np.concatenate(self.y_true[phase]), np.concatenate(self.y_pred[phase]),
                                                  prefix=phase + '/')
                     self._write_sparcc_results(np.concatenate(self.y_true[phase]), np.concatenate(self.y_pred[phase]),
                                                prefix=phase + '/')
@@ -390,17 +413,26 @@ class SPARCC_MLP(pl.LightningModule):
             for i in range(len(y_true)):
                 writer.writerow([int(y_true[i]), int(y_pred[i]), float(err[i])])
 
-    def _log_regression_metrics(self, y_true, y_pred, prefix='', suffix=''):
+    def _log_prediction_metrics(self, y_true, y_pred, prefix='', suffix=''):
 
         # flatten everything
         y_pred = y_pred.flatten()
         y_true = y_true.flatten()
 
         # compute scores
-        m = mae(y_true, y_pred)
+        if self.n_classes == 1:
+            m = mae(y_true, y_pred)
 
-        # log scores
-        self.log(prefix + 'mae' + suffix, m)
+            # log scores
+            self.log(prefix + 'mae' + suffix, m)
+
+        else:
+            acc = accuracy_score(y_true, y_pred)
+            ba = balanced_accuracy_score(y_true, y_pred)
+
+            # log scores
+            self.log(prefix + 'acc' + suffix, acc)
+            self.log(prefix + 'ba' + suffix, ba)
 
         # # save results
         # log_dir = self.logger.log_dir

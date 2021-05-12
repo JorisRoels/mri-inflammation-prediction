@@ -123,6 +123,7 @@ class SPARCCDataset(data.Dataset):
         self.apply_weighting = apply_weighting
 
         # load all necessary files
+        print_frm('    Loading pickled data')
         self.scores = load(os.path.join(data_path, SCORES_PP_FILE))
         self.slicenumbers = load(os.path.join(data_path, SLICENUMBERS_PP_FILE))
         self.t1_data = load(os.path.join(data_path, T1_PP_FILE))
@@ -141,12 +142,14 @@ class SPARCCDataset(data.Dataset):
         self.t2_data = self.t2_data[start:stop]
 
         # extract slices
+        print_frm('    Extracting slices')
         self.t1_slices = self._extract_slices(self.t1_data, self.slicenumbers[1])
         self.t2_slices = self._extract_slices(self.t2_data, self.slicenumbers[0],
                                               target_size=self.t1_slices[0].shape[1:])
 
         # augmentation on slice level if necessary
         if self.preprocess_transform is not None:
+            print_frm('    Augmenting slices...')
             self.scores, self.slicenumbers, self.t1_slices, self.t2_slices = \
                 self._augment_slices(self.scores, self.slicenumbers, self.t1_slices, self.t2_slices)
 
@@ -159,25 +162,33 @@ class SPARCCDataset(data.Dataset):
            not os.path.exists(SEG_S_TMP_FILE):
             t1_slices_clahe = self._compute_clahe(self.t1_slices, clip_limit=T1_CLIPLIMIT)
         if os.path.exists(SI_JOINTS_TMP_FILE):
+            print_frm('    Loading SI joint locations')
             self.si_joints = np.load(SI_JOINTS_TMP_FILE)
         else:
+            print_frm('    Computing SI joint locations')
             self.si_joints = self._compute_joints(t1_slices_clahe, self.si_joint_model, out_file=SI_JOINTS_TMP_FILE)
         if os.path.exists(SEG_I_TMP_FILE):
+            print_frm('    Loading illium segmentation')
             self.illium = np.load(SEG_I_TMP_FILE)
         else:
+            print_frm('    Computing illium segmentation')
             self.illium = self._compute_segmentation(t1_slices_clahe, self.illum_model, out_file=SEG_I_TMP_FILE)
         if os.path.exists(SEG_S_TMP_FILE):
+            print_frm('    Loading sacrum segmentation')
             self.sacrum = np.load(SEG_S_TMP_FILE)
         else:
+            print_frm('    Computing sacrum segmentation')
             self.sacrum = self._compute_segmentation(t1_slices_clahe, self.sacrum_model, out_file=SEG_S_TMP_FILE)
 
         # extract quartiles and corresponding weight maps
         Q_TMP_FILE = os.path.join(CACHE_DIR, '%s_%d_%d.%s' % (Q_TMP, start, stop, EXT))
         W_TMP_FILE = os.path.join(CACHE_DIR, '%s_%d_%d.%s' % (W_TMP, start, stop, EXT))
         if os.path.exists(Q_TMP_FILE) and os.path.exists(W_TMP_FILE):
+            print_frm('    Loading quartiles and weights')
             self.quartiles = np.load(Q_TMP_FILE)
             self.weights = np.load(W_TMP_FILE)
         else:
+            print_frm('    Extracting quartiles and weights')
             self.quartiles, self.weights = self._extract_quartiles(self.t1_slices, self.t2_slices, self.si_joints,
                                                                    self.illium, self.sacrum, Q_L, Q_D,
                                                                    out_file=(Q_TMP_FILE, W_TMP_FILE))
@@ -194,6 +205,7 @@ class SPARCCDataset(data.Dataset):
                 self.quartiles[:, c, ...] = self.quartiles[:, c, ...] * self.weights
 
         # extract scores
+        print_frm('    Extracting scores')
         self.q_scores, self.s_scores_i, self.s_scores_d, self.sparcc = self._extract_scores(self.scores)
 
     def __getitem__(self, i):
@@ -243,7 +255,6 @@ class SPARCCDataset(data.Dataset):
 
         n = len(t1_data)
         transform = self.preprocess_transform
-        print_frm('Augmenting slices...')
         ds1 = []
         ds2 = []
         for i in tqdm(range(n), desc='Augmenting slices'):
@@ -364,7 +375,7 @@ class SPARCCDataset(data.Dataset):
             y_j = (y + y_) // 2
             return x_j - q < 0 or y_j - q < 0 or y_j + q > y_max
 
-        q = int(np.sqrt(2) * (Q_L + 2*Q_D))
+        q = (Q_L + 2*Q_D)
         left_bboxes = [(-1, -1, -1, -1, 0, 1)]
         right_bboxes = [(-1, -1, -1, -1, 0, 1)]
         for bbox in bboxes:
@@ -386,6 +397,23 @@ class SPARCCDataset(data.Dataset):
         return bboxes[i_max]
 
     def _correct_bboxes(self, bbox, bbox_l_found, bbox_r_found):
+
+        def _correct_bbox_side(bbox, s, c):
+            for c in range(4):
+                m_n = bbox[:, s, c] < 0
+                m_p = bbox[:, s, c] >= 0
+                med = np.median(bbox[:, s, c][m_p])
+                bbox[:, s, c][m_n] = med
+            return bbox
+
+        if not bbox_l_found:
+            for c in range(4):
+                bbox = _correct_bbox_side(bbox, 0, c)
+
+        if not bbox_r_found:
+            for c in range(4):
+                bbox = _correct_bbox_side(bbox, 1, c)
+
         
         return bbox
 
@@ -414,18 +442,13 @@ class SPARCCDataset(data.Dataset):
                 input = torch.from_numpy(np.repeat(x[:, np.newaxis, ...], 3, axis=1)).cuda()
                 with amp_autocast():
                     output = bench(input.float()).cpu().numpy()
-                bbox_l_found = True
-                bbox_r_found = True
                 for j in range(N_SLICES):
                     bb_l, bb_r = self._filter_bboxes(output[j], x.shape[1:])
                     bboxes[i, j, 0] = self._maximize_bbox_score(bb_l)[:4]
                     bboxes[i, j, 1] = self._maximize_bbox_score(bb_r)[:4]
-                    if bboxes[i, j, 0, 0] < 0:
-                        bbox_l_found = False
-                    if bboxes[i, j, 0, 0] < 0:
-                        bbox_r_found = False
-                if not bbox_l_found or not bbox_r_found:
-                    bboxes[i] = self._correct_bboxes(bboxes[i], bbox_l_found, bbox_r_found)
+
+        # post-process joint bboxes
+        bboxes = self._post_process_joint_bboxes(bboxes)
 
         # save to tmp dir if necessary
         if out_file is not None:
@@ -433,6 +456,34 @@ class SPARCCDataset(data.Dataset):
             np.save(out_file, bboxes)
 
         return bboxes
+
+    def _post_process_joint_bboxes(self, boxes):
+
+        n, n_slices, n_sides, n_coos = boxes.shape
+
+        # fix unknown detections
+        boxes_new = np.zeros_like(boxes)
+        bbox_med = np.zeros((n, n_sides, n_coos))
+        for i in range(n):
+            for j in range(n_sides):
+                for k in range(n_coos):
+                    c = boxes[i, :, j, k]
+                    c_pos = c[c >= 0]
+                    bbox_med[i, j, k] = np.median(c_pos)
+                    boxes_new[i, :, j, k][c >= 0] = c_pos
+                    boxes_new[i, :, j, k][c < 0] = bbox_med[i, j, k]
+
+        # fix detections that are too far away from the median
+        for i in range(n):
+            for k in range(n_sides):
+                j_med = (bbox_med[i, k, :2] + bbox_med[i, k, 2:4]) / 2
+                for j in range(n_slices):
+                    j_pred = (boxes_new[i, j, k, :2] + boxes_new[i, j, k, 2:4]) / 2
+                    d = np.sqrt(np.sum((j_med - j_pred)**2))
+                    if d > MEDIAN_THRESHOLD:
+                        boxes_new[i, j, k, :] = bbox_med[i, k, :]
+
+        return boxes
 
     def _compute_segmentation(self, data, model, out_file=None):
 
@@ -466,12 +517,16 @@ class SPARCCDataset(data.Dataset):
 
     def _synced_extraction(self, x_1, x_2, bbox, p_i, p_s, q_l, q_d, s):
 
+        # padding
+        pad = int(np.sqrt(2) * (q_l + 2 * q_d))
+        target_shape = (2*pad + x_1.shape[0], 2*pad + x_1.shape[1])
+
         # bounding box coordinates
         i_ul, j_ul, i_br, j_br = bbox
 
         # joint location
-        i_j = int((i_ul + i_br) // 2)
-        j_j = int((j_ul + j_br) // 2)
+        i_j = int(pad + (i_ul + i_br) // 2)
+        j_j = int(pad + (j_ul + j_br) // 2)
 
         # joint angle
         alpha_j = np.arctan((i_br - i_ul) / (j_br - j_ul))
@@ -479,10 +534,10 @@ class SPARCCDataset(data.Dataset):
         # rotate image to fix joint region
         sgn = 1 if s == 0 else -1
         R = cv2.getRotationMatrix2D((i_j, j_j), (sgn * alpha_j) / np.pi * 180, 1)
-        x_1_r = cv2.warpAffine(x_1, R, x_1.shape)
-        x_2_r = cv2.warpAffine(x_2, R, x_2.shape)
-        p_i_r = cv2.warpAffine(p_i, R, p_i.shape)
-        p_s_r = cv2.warpAffine(p_s, R, p_s.shape)
+        x_1_r = cv2.warpAffine(np.pad(x_1, pad), R, target_shape)
+        x_2_r = cv2.warpAffine(np.pad(x_2, pad), R, target_shape)
+        p_i_r = cv2.warpAffine(np.pad(p_i, pad), R, target_shape)
+        p_s_r = cv2.warpAffine(np.pad(p_s, pad), R, target_shape)
         x_r = np.stack((x_1_r, x_2_r, p_i_r, p_s_r))
 
         # extract patches

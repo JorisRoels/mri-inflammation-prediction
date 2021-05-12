@@ -80,8 +80,8 @@ if __name__ == '__main__':
     parser.add_argument("--checkpoint", help="Path to pretrained model", type=str, default='')
 
     # optimization parameters
-    parser.add_argument("--epochs", help="Number of training epochs", type=int, default=10000)
-    parser.add_argument("--lr", help="Learning rate for the optimization", type=float, default=1e-4)
+    parser.add_argument("--epochs", help="Number of training epochs", type=int, default=3000)
+    parser.add_argument("--lr", help="Learning rate for the optimization", type=float, default=1e-5)
 
     # compute parameters
     parser.add_argument("--train_batch_size", help="Batch size during training", type=int, default=64)
@@ -93,7 +93,7 @@ if __name__ == '__main__':
     # logging parameters
     parser.add_argument("--log_dir", help="Logging directory", type=str, default='logs')
     parser.add_argument("--log_freq", help="Frequency to log results", type=int, default=50)
-    parser.add_argument("--log_refresh_rate", help="Refresh rate for logging", type=int, default=0)
+    parser.add_argument("--log_refresh_rate", help="Refresh rate for logging", type=int, default=1)
     parser.add_argument("--seed", help="Seed for reproducibility", type=int, default=0)
 
     args = parser.parse_args()
@@ -110,6 +110,7 @@ if __name__ == '__main__':
     print_frm('Loading data')
     split = args.train_val_test_split
     transform = Compose([RotateRandom(angle=10), RandomDeformation()])
+    # transform = None
     train = SPARCCDataset(args.data_dir, args.si_joint_model, args.model_checkpoint_illium,
                           args.model_checkpoint_sacrum, range_split=(0, split[0]), seed=args.seed,
                           mode=INFLAMMATION_MODULE, preprocess_transform=transform)
@@ -142,16 +143,18 @@ if __name__ == '__main__':
         Build the SPARCC regression dataset
     """
     print_frm('Setting up regression dataset')
-    f_hidden = 16
-    train = SPARCCRegressionDataset(f_i_train, f_ii_train, train.sparcc, f_red=f_hidden)
-    val = SPARCCRegressionDataset(f_i_val, f_ii_val, val.sparcc, f_red=f_hidden)
-    test = SPARCCRegressionDataset(f_i_test, f_ii_test, test.sparcc, f_red=f_hidden)
+    f_hidden = 64
+    categories = [2/72, 6/72, 11/72]
+    train = SPARCCRegressionDataset(f_i_train, f_ii_train, train.sparcc, f_red=f_hidden, categories=categories)
+    val = SPARCCRegressionDataset(f_i_val, f_ii_val, val.sparcc, f_red=f_hidden, categories=categories)
+    test = SPARCCRegressionDataset(f_i_test, f_ii_test, test.sparcc, f_red=f_hidden, categories=categories)
 
     """
         Build the SPARCC regression model
     """
     print_frm('Building the MLP network')
-    net = SPARCC_MLP(f_dim=f_hidden, f_hidden=128, lr=args.lr, w_sparcc=w_sparcc)
+    w_sparcc = np.asarray([0.0070922,  0.02083333, 0.03225806, 0.02439024])
+    net = SPARCC_MLP(f_dim=f_hidden, f_hidden=128, lr=args.lr, w_sparcc=w_sparcc, categories=categories)
 
     """
         Training regression model
