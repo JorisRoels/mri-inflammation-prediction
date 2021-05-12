@@ -66,6 +66,8 @@ if __name__ == '__main__':
     parser.add_argument("--train_val_test_split", help="Train/validation/test split", type=str, default="0.50,0.75")
     parser.add_argument("--backbone", help="Backbone feature extractor of the model", type=str, default='ResNet18')
     parser.add_argument("--lambda_s", help="SPARCC similarity regularization parameter", type=float, default=1e2)
+    parser.add_argument("--apply_weighting", help="Boolean flag that specifies ROI masking", action='store_true',
+                        default=False)
 
     # optimization parameters
     parser.add_argument("--epochs", help="Number of training epochs", type=int, default=50)
@@ -101,11 +103,13 @@ if __name__ == '__main__':
                          AddNoise(sigma_max=0.05)])
     train = SPARCCDataset(args.data_dir, args.si_joint_model, args.model_checkpoint_illium,
                           args.model_checkpoint_sacrum, range_split=(0, split[0]), transform=transform, seed=args.seed,
-                          mode=INFLAMMATION_MODULE)
+                          mode=INFLAMMATION_MODULE, apply_weighting=args.apply_weighting)
     val = SPARCCDataset(args.data_dir, args.si_joint_model, args.model_checkpoint_illium, args.model_checkpoint_sacrum,
-                        range_split=(split[0], split[1]), seed=args.seed, mode=INFLAMMATION_MODULE)
+                        range_split=(split[0], split[1]), seed=args.seed, mode=INFLAMMATION_MODULE,
+                        apply_weighting=args.apply_weighting)
     test = SPARCCDataset(args.data_dir, args.si_joint_model, args.model_checkpoint_illium, args.model_checkpoint_sacrum,
-                         range_split=(split[1], 1), seed=args.seed, mode=INFLAMMATION_MODULE)
+                         range_split=(split[1], 1), seed=args.seed, mode=INFLAMMATION_MODULE,
+                         apply_weighting=args.apply_weighting)
     freq = np.histogram(np.concatenate((train.sparcc, val.sparcc)), bins=BINS)[0]
     tmp1 = freq == 0
     tmp2 = freq != 0
