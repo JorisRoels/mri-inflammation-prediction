@@ -148,15 +148,17 @@ class SPARCCDataset(data.Dataset):
                                               target_size=self.t1_slices[0].shape[1:])
 
         # augmentation on slice level if necessary
+        c_dir = CACHE_DIR
         if self.preprocess_transform is not None:
             print_frm('    Augmenting slices...')
+            c_dir = CACHE_DIR + '-augmented'
             self.scores, self.slicenumbers, self.t1_slices, self.t2_slices = \
                 self._augment_slices(self.scores, self.slicenumbers, self.t1_slices, self.t2_slices)
 
         # pre-compute SI joint locations and illium/sacrum segmentations
-        SI_JOINTS_TMP_FILE = os.path.join(CACHE_DIR, '%s_%d_%d.%s' % (SI_JOINTS_TMP, start, stop, EXT))
-        SEG_I_TMP_FILE = os.path.join(CACHE_DIR, '%s_%d_%d.%s' % (SEG_I_TMP, start, stop, EXT))
-        SEG_S_TMP_FILE = os.path.join(CACHE_DIR, '%s_%d_%d.%s' % (SEG_S_TMP, start, stop, EXT))
+        SI_JOINTS_TMP_FILE = os.path.join(c_dir, '%s_%d_%d.%s' % (SI_JOINTS_TMP, start, stop, EXT))
+        SEG_I_TMP_FILE = os.path.join(c_dir, '%s_%d_%d.%s' % (SEG_I_TMP, start, stop, EXT))
+        SEG_S_TMP_FILE = os.path.join(c_dir, '%s_%d_%d.%s' % (SEG_S_TMP, start, stop, EXT))
         if not os.path.exists(SI_JOINTS_TMP_FILE) or \
            not os.path.exists(SEG_I_TMP_FILE) or \
            not os.path.exists(SEG_S_TMP_FILE):
@@ -181,8 +183,8 @@ class SPARCCDataset(data.Dataset):
             self.sacrum = self._compute_segmentation(t1_slices_clahe, self.sacrum_model, out_file=SEG_S_TMP_FILE)
 
         # extract quartiles and corresponding weight maps
-        Q_TMP_FILE = os.path.join(CACHE_DIR, '%s_%d_%d.%s' % (Q_TMP, start, stop, EXT))
-        W_TMP_FILE = os.path.join(CACHE_DIR, '%s_%d_%d.%s' % (W_TMP, start, stop, EXT))
+        Q_TMP_FILE = os.path.join(c_dir, '%s_%d_%d.%s' % (Q_TMP, start, stop, EXT))
+        W_TMP_FILE = os.path.join(c_dir, '%s_%d_%d.%s' % (W_TMP, start, stop, EXT))
         if os.path.exists(Q_TMP_FILE) and os.path.exists(W_TMP_FILE):
             print_frm('    Loading quartiles and weights')
             self.quartiles = np.load(Q_TMP_FILE)
