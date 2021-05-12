@@ -256,7 +256,7 @@ class SPARCCDataset(data.Dataset):
 
             # reshape to appropriate size
             n_slices, sz_orig, _ = x_t2.shape
-            x = np.concatenate((x_t1, x_t2), axis=0, dtype=float)
+            x = np.concatenate((x_t1, x_t2), axis=0).astype(float)
 
             # augment sample
             data_t1 = []
@@ -365,8 +365,8 @@ class SPARCCDataset(data.Dataset):
             return x_j - q < 0 or y_j - q < 0 or y_j + q > y_max
 
         q = int(np.sqrt(2) * (Q_L + 2*Q_D))
-        left_bboxes = []
-        right_bboxes = []
+        left_bboxes = [(-1, -1, -1, -1, 0, 1)]
+        right_bboxes = [(-1, -1, -1, -1, 0, 1)]
         for bbox in bboxes:
             if bbox_is_left(bbox[:4], sz) and not quartiles_exceed_edges_left(bbox[:4], q, sz):
                 left_bboxes.append(bbox)
@@ -384,6 +384,10 @@ class SPARCCDataset(data.Dataset):
         i_max = np.argmax(scores)
 
         return bboxes[i_max]
+
+    def _correct_bboxes(self, bbox, bbox_l_found, bbox_r_found):
+        
+        return bbox
 
     def _compute_joints(self, data, model, out_file=None):
 
@@ -410,10 +414,18 @@ class SPARCCDataset(data.Dataset):
                 input = torch.from_numpy(np.repeat(x[:, np.newaxis, ...], 3, axis=1)).cuda()
                 with amp_autocast():
                     output = bench(input.float()).cpu().numpy()
+                bbox_l_found = True
+                bbox_r_found = True
                 for j in range(N_SLICES):
                     bb_l, bb_r = self._filter_bboxes(output[j], x.shape[1:])
                     bboxes[i, j, 0] = self._maximize_bbox_score(bb_l)[:4]
                     bboxes[i, j, 1] = self._maximize_bbox_score(bb_r)[:4]
+                    if bboxes[i, j, 0, 0] < 0:
+                        bbox_l_found = False
+                    if bboxes[i, j, 0, 0] < 0:
+                        bbox_r_found = False
+                if not bbox_l_found or not bbox_r_found:
+                    bboxes[i] = self._correct_bboxes(bboxes[i], bbox_l_found, bbox_r_found)
 
         # save to tmp dir if necessary
         if out_file is not None:
