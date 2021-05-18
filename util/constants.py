@@ -126,11 +126,11 @@ BACKBONES = {'AlexNet': models.alexnet,
              'DenseNet121': models.densenet121,
              'DenseNet201': models.densenet201}
 
-w_pos_inflamm = 0.08165708812260536
+w_pos_inflamm = 0.082915473
 w_neg_inflamm = 1 - w_pos_inflamm
 INFLAMMATION_WEIGHTS = [1 / w_neg_inflamm, 1 / w_pos_inflamm]
 
-w_pos_intense_inflamm = 0.035759897828863345
+w_pos_intense_inflamm = 0.038443171
 w_neg_intense_inflamm = 1 - w_pos_inflamm
 INTENSE_INFLAMMATION_WEIGHTS = [1 / w_neg_intense_inflamm, 1 / w_pos_intense_inflamm]
 

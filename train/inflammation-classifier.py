@@ -62,7 +62,6 @@ if __name__ == '__main__':
     # network parameters
     parser.add_argument("--train_val_test_split", help="Train/validation/test split", type=str, default="0.50,0.75")
     parser.add_argument("--backbone", help="Backbone feature extractor of the model", type=str, default='ResNet18')
-    parser.add_argument("--lambda_s", help="SPARCC similarity regularization parameter", type=float, default=1e2)
     parser.add_argument("--omit_t1_input", help="Boolean flag that omits usage of T1 slices", action='store_true', default=False)
     parser.add_argument("--omit_t2_input", help="Boolean flag that omits usage of T1 slices", action='store_true', default=False)
     parser.add_argument("--omit_weighting", help="Boolean flag that specifies ROI masking", action='store_true', default=False)
