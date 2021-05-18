@@ -66,8 +66,9 @@ if __name__ == '__main__':
     parser.add_argument("--train_val_test_split", help="Train/validation/test split", type=str, default="0.50,0.75")
     parser.add_argument("--backbone", help="Backbone feature extractor of the model", type=str, default='ResNet18')
     parser.add_argument("--lambda_s", help="SPARCC similarity regularization parameter", type=float, default=1e2)
-    parser.add_argument("--apply_weighting", help="Boolean flag that specifies ROI masking", action='store_true',
-                        default=False)
+    parser.add_argument("--omit_t1_input", help="Boolean flag that omits usage of T1 slices", action='store_true', default=False)
+    parser.add_argument("--omit_t2_input", help="Boolean flag that omits usage of T1 slices", action='store_true', default=False)
+    parser.add_argument("--omit_weighting", help="Boolean flag that specifies ROI masking", action='store_true', default=False)
 
     # optimization parameters
     parser.add_argument("--epochs", help="Number of training epochs", type=int, default=50)
@@ -103,13 +104,13 @@ if __name__ == '__main__':
                          AddNoise(sigma_max=0.05)])
     train = SPARCCDataset(args.data_dir, args.si_joint_model, args.model_checkpoint_illium,
                           args.model_checkpoint_sacrum, range_split=(0, split[0]), transform=transform, seed=args.seed,
-                          mode=INFLAMMATION_MODULE, apply_weighting=args.apply_weighting)
+                          mode=INFLAMMATION_MODULE, apply_weighting=not args.omit_weighting)
     val = SPARCCDataset(args.data_dir, args.si_joint_model, args.model_checkpoint_illium, args.model_checkpoint_sacrum,
                         range_split=(split[0], split[1]), seed=args.seed, mode=INFLAMMATION_MODULE,
-                        apply_weighting=args.apply_weighting)
+                        apply_weighting=not args.omit_weighting)
     test = SPARCCDataset(args.data_dir, args.si_joint_model, args.model_checkpoint_illium, args.model_checkpoint_sacrum,
                          range_split=(split[1], 1), seed=args.seed, mode=INFLAMMATION_MODULE,
-                         apply_weighting=args.apply_weighting)
+                         apply_weighting=not args.omit_weighting)
     freq = np.histogram(np.concatenate((train.sparcc, val.sparcc)), bins=BINS)[0]
     tmp1 = freq == 0
     tmp2 = freq != 0
@@ -126,7 +127,8 @@ if __name__ == '__main__':
         Build the network
     """
     print_frm('Building the network')
-    net = SPARCC_CNN(backbone=args.backbone, lambda_s=args.lambda_s, lr=args.lr, w_sparcc=w_sparcc)
+    net = SPARCC_CNN(backbone=args.backbone, lambda_s=args.lambda_s, lr=args.lr, w_sparcc=w_sparcc,
+                     use_t1_input=not args.omit_t1_input, use_t2_input=not args.omit_t2_input)
 
     """
         Train the inflammation network

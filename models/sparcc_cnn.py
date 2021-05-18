@@ -124,7 +124,7 @@ class SPARCC_CNN_Module(nn.Module):
     Main module for inflammation and SPARCC prediction
     """
 
-    def __init__(self, backbone='AlexNet', pretrained=False, lambda_s=1):
+    def __init__(self, backbone='AlexNet', pretrained=False, lambda_s=1, use_t1_input=True, use_t2_input=True):
         super().__init__()
 
         self.pretrained = pretrained
@@ -134,10 +134,13 @@ class SPARCC_CNN_Module(nn.Module):
         else:
             self.model = BACKBONES['AlexNet']
         self.lambda_s = lambda_s
+        self.use_t1_input = use_t1_input
+        self.use_t2_input = use_t2_input
+        in_channels = 2 if use_t1_input and use_t2_input else 1
 
         # construct main modules
-        self.feature_extractor_i = self._construct_feature_extractor(in_channels=2)
-        self.feature_extractor_ii = self._construct_feature_extractor(in_channels=2*N_QUARTILES)
+        self.feature_extractor_i = self._construct_feature_extractor(in_channels=in_channels)
+        self.feature_extractor_ii = self._construct_feature_extractor(in_channels=in_channels*N_QUARTILES)
         self.classifier_i = self._construct_classifier()
         self.classifier_ii = self._construct_classifier(double_inputs=True)
         self.merge_q_module = self._construct_merge_q_module()
@@ -443,11 +446,13 @@ class SPARCC_MLP(pl.LightningModule):
 
 class SPARCC_CNN(pl.LightningModule):
 
-    def __init__(self, backbone='AlexNet', pretrained=False, lambda_s=1, lr=1e-3, w_sparcc=None):
+    def __init__(self, backbone='AlexNet', pretrained=False, lambda_s=1, lr=1e-3, w_sparcc=None, use_t1_input=True,
+                 use_t2_input=True):
         super().__init__()
 
         # define model
-        self.model = SPARCC_CNN_Module(backbone=backbone, pretrained=pretrained, lambda_s=lambda_s)
+        self.model = SPARCC_CNN_Module(backbone=backbone, pretrained=pretrained, lambda_s=lambda_s,
+                                       use_t1_input=use_t1_input, use_t2_input=use_t2_input)
 
         # define loss function
         self.loss_ce_i = nn.CrossEntropyLoss(weight=torch.Tensor(INFLAMMATION_WEIGHTS))
@@ -455,6 +460,8 @@ class SPARCC_CNN(pl.LightningModule):
         self.loss_sim = SPARCCSimilarityLoss(w_sparcc=w_sparcc)
         # self.loss_sim = nn.L1Loss()
         self.lr = lr
+        self.use_t1_input = use_t1_input
+        self.use_t2_input = use_t2_input
 
         # set training mode
         self.set_training_mode(JOINT)
@@ -463,11 +470,20 @@ class SPARCC_CNN(pl.LightningModule):
 
         return self.model(x, mode=mode)
 
+    def _select_relevant_inputs(self, x):
+        if self.use_t1_input and self.use_t2_input:
+            return x
+        elif self.use_t2_input:
+            return x[:, 1:2]
+        else:
+            return x[:, 0:1]
+
     def base_step_i(self, batch, batch_idx, phase='train'):
 
         # transfer to suitable device and get labels
         x, y_i = batch
         x = x.float()
+        x = self._select_relevant_inputs(x)
         y_i = y_i.long()
 
         # forward prop
@@ -491,6 +507,7 @@ class SPARCC_CNN(pl.LightningModule):
         # transfer to suitable device and get labels
         x, _, y_ii = batch
         x = x.float()
+        x = self._select_relevant_inputs(x)
         y_ii = y_ii.long()
 
         # forward prop
@@ -514,6 +531,7 @@ class SPARCC_CNN(pl.LightningModule):
         # transfer to suitable device and get labels
         x, _, _, _, y_s = batch
         x = x.float()
+        x = self._select_relevant_inputs(x)
         y_s = y_s.float()
 
         # forward prop

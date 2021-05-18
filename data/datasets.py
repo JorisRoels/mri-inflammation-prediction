@@ -170,6 +170,7 @@ class SPARCCDataset(data.Dataset):
                 self.t2_data = load(os.path.join(c_dir, T2_PP_FILE))
 
         # pre-compute SI joint locations and illium/sacrum segmentations
+        mkdir(c_dir)
         SI_JOINTS_TMP_FILE = os.path.join(c_dir, '%s_%d_%d.%s' % (SI_JOINTS_TMP, start, stop, EXT))
         SEG_I_TMP_FILE = os.path.join(c_dir, '%s_%d_%d.%s' % (SEG_I_TMP, start, stop, EXT))
         SEG_S_TMP_FILE = os.path.join(c_dir, '%s_%d_%d.%s' % (SEG_S_TMP, start, stop, EXT))
