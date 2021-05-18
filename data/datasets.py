@@ -588,8 +588,8 @@ class SPARCCDataset(data.Dataset):
         n = len(scores[0])
 
         q_scores = np.asarray(scores[0], dtype=int)
-        s_scores_i = np.asarray(scores[1], dtype=int)
-        s_scores_d = np.asarray(scores[2], dtype=int)
+        s_scores_d = np.asarray(scores[1], dtype=int)
+        s_scores_i = np.asarray(scores[2], dtype=int)
         sparcc = np.sum(q_scores.reshape(n, -1), axis=1) + np.sum(s_scores_i.reshape(n, -1), axis=1) + \
                  np.sum(s_scores_i.reshape(n, -1), axis=1)
         sparcc = sparcc / 72

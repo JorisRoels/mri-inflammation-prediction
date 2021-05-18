@@ -11,25 +11,22 @@ from neuralnets.util.augmentation import *
 from pytorch_lightning.callbacks import ModelCheckpoint
 
 from data.datasets import SPARCCDataset
-from models.sparcc_cnn import SPARCC_CNN
+from models.sparcc_cnn import DeepInflammation_CNN, Inflammation_CNN
 from util.constants import *
 
 
 factor = {INFLAMMATION_MODULE: 64, INTENSE_INFLAMMATION_MODULE: 12, SPARCC_MODULE: 1, JOINT: 1}
 
 
-def _train_module(net, train_data, val_data, args, mode=JOINT, monitor='val/sim-mae', monitor_mode='min'):
+def _train_module(net, train_data, val_data, args):
 
-    train_data.mode = mode
-    val_data.mode = mode
-    if mode == SPARCC_MODULE or mode == JOINT:
-        train_data.transform = None
-    train_loader = DataLoader(train_data, batch_size=factor[mode]*args.train_batch_size, num_workers=args.num_workers,
-                              pin_memory=True, shuffle=True)
-    val_loader = DataLoader(val_data, batch_size=factor[mode]*args.test_batch_size, num_workers=args.num_workers,
-                            pin_memory=True)
-    net.set_training_mode(mode)
-    checkpoint_callback = ModelCheckpoint(save_top_k=5, verbose=True, monitor=monitor, mode=monitor_mode)
+    train_data.mode = INTENSE_INFLAMMATION_MODULE
+    val_data.mode = INTENSE_INFLAMMATION_MODULE
+    train_loader = DataLoader(train_data, batch_size=factor[INTENSE_INFLAMMATION_MODULE]*args.train_batch_size,
+                              num_workers=args.num_workers, pin_memory=True, shuffle=True)
+    val_loader = DataLoader(val_data, batch_size=factor[INTENSE_INFLAMMATION_MODULE]*args.test_batch_size,
+                            num_workers=args.num_workers, pin_memory=True)
+    checkpoint_callback = ModelCheckpoint(save_top_k=5, verbose=True, monitor='val/roc-auc', mode='max')
     trainer = pl.Trainer(max_epochs=args.epochs, gpus=args.gpus, accelerator=args.accelerator,
                          default_root_dir=args.log_dir, flush_logs_every_n_steps=args.log_freq,
                          log_every_n_steps=args.log_freq, callbacks=[checkpoint_callback],
@@ -39,12 +36,12 @@ def _train_module(net, train_data, val_data, args, mode=JOINT, monitor='val/sim-
     return trainer
 
 
-def _test_module(trainer, net, test_data, args, mode=JOINT):
+def _test_module(trainer, net, test_data, args):
 
-    test_data.mode = mode
+    test_data.mode = INTENSE_INFLAMMATION_MODULE
     net.load_state_dict(torch.load(trainer.checkpoint_callback.best_model_path)['state_dict'])
-    test_loader = DataLoader(test_data, batch_size=factor[mode]*args.test_batch_size, num_workers=args.num_workers,
-                             pin_memory=True)
+    test_loader = DataLoader(test_data, batch_size=factor[INTENSE_INFLAMMATION_MODULE]*args.test_batch_size,
+                             num_workers=args.num_workers, pin_memory=True)
     trainer.test(net, test_loader)
 
     return trainer
@@ -61,14 +58,21 @@ if __name__ == '__main__':
                         required=True)
     parser.add_argument("--model-checkpoint-sacrum", help="Path to the sacrum U-Net checkpoint", type=str,
                         required=True)
+    parser.add_argument("--inflammation-checkpoint", help="Path to the inflammation classification checkpoint",
+                        type=str, default=None)
+    parser.add_argument("--inflammation-backbone", help="Backbone feature extractor of the inflammation model",
+                        type=str, default='ResNet18')
 
     # network parameters
     parser.add_argument("--train_val_test_split", help="Train/validation/test split", type=str, default="0.50,0.75")
     parser.add_argument("--backbone", help="Backbone feature extractor of the model", type=str, default='ResNet18')
     parser.add_argument("--lambda_s", help="SPARCC similarity regularization parameter", type=float, default=1e2)
-    parser.add_argument("--omit_t1_input", help="Boolean flag that omits usage of T1 slices", action='store_true', default=False)
-    parser.add_argument("--omit_t2_input", help="Boolean flag that omits usage of T1 slices", action='store_true', default=False)
-    parser.add_argument("--omit_weighting", help="Boolean flag that specifies ROI masking", action='store_true', default=False)
+    parser.add_argument("--omit_t1_input", help="Boolean flag that omits usage of T1 slices", action='store_true',
+                        default=False)
+    parser.add_argument("--omit_t2_input", help="Boolean flag that omits usage of T1 slices", action='store_true',
+                        default=False)
+    parser.add_argument("--omit_weighting", help="Boolean flag that specifies ROI masking", action='store_true',
+                        default=False)
 
     # optimization parameters
     parser.add_argument("--epochs", help="Number of training epochs", type=int, default=50)
@@ -104,60 +108,38 @@ if __name__ == '__main__':
                          AddNoise(sigma_max=0.05)])
     train = SPARCCDataset(args.data_dir, args.si_joint_model, args.model_checkpoint_illium,
                           args.model_checkpoint_sacrum, range_split=(0, split[0]), transform=transform, seed=args.seed,
-                          mode=INFLAMMATION_MODULE, apply_weighting=not args.omit_weighting)
+                          mode=INTENSE_INFLAMMATION_MODULE, apply_weighting=not args.omit_weighting)
     val = SPARCCDataset(args.data_dir, args.si_joint_model, args.model_checkpoint_illium, args.model_checkpoint_sacrum,
-                        range_split=(split[0], split[1]), seed=args.seed, mode=INFLAMMATION_MODULE,
+                        range_split=(split[0], split[1]), seed=args.seed, mode=INTENSE_INFLAMMATION_MODULE,
                         apply_weighting=not args.omit_weighting)
     test = SPARCCDataset(args.data_dir, args.si_joint_model, args.model_checkpoint_illium, args.model_checkpoint_sacrum,
-                         range_split=(split[1], 1), seed=args.seed, mode=INFLAMMATION_MODULE,
+                         range_split=(split[1], 1), seed=args.seed, mode=INTENSE_INFLAMMATION_MODULE,
                          apply_weighting=not args.omit_weighting)
-    freq = np.histogram(np.concatenate((train.sparcc, val.sparcc)), bins=BINS)[0]
-    tmp1 = freq == 0
-    tmp2 = freq != 0
-    freq[tmp1] = 1
-    w_sparcc = 1 / (freq)
-    print_frm('Train data distribution: Infl: %.2f - Non-infl: %.2f' % (100*np.mean(train.q_scores),
-                                                                        100*np.mean(1-train.q_scores)))
-    print_frm('Val data distribution: Infl: %.2f - Non-infl: %.2f' % (100*np.mean(val.q_scores),
-                                                                      100*np.mean(1-val.q_scores)))
-    print_frm('Test data distribution: Infl: %.2f - Non-infl: %.2f' % (100*np.mean(test.q_scores),
-                                                                       100*np.mean(1-test.q_scores)))
+    print_frm('Train data distribution: Deep infl: %.2f - No deep infl: %.2f' % (100*np.mean(train.s_scores_d),
+                                                                                 100*np.mean(1-train.s_scores_d)))
+    print_frm('Val data distribution: Deep infl: %.2f - No deep infl: %.2f' % (100*np.mean(val.s_scores_d),
+                                                                               100*np.mean(1-val.s_scores_d)))
+    print_frm('Test data distribution: Deep infl: %.2f - No deep infl: %.2f' % (100*np.mean(test.s_scores_d),
+                                                                                100*np.mean(1-test.s_scores_d)))
 
     """
         Build the network
     """
     print_frm('Building the network')
-    net = SPARCC_CNN(backbone=args.backbone, lambda_s=args.lambda_s, lr=args.lr, w_sparcc=w_sparcc,
-                     use_t1_input=not args.omit_t1_input, use_t2_input=not args.omit_t2_input)
+    if args.inflammation_checkpoint is not None:
+        net_i = Inflammation_CNN(backbone=args.inflammation_backbone, use_t1_input=not args.omit_t1_input,
+                                 use_t2_input=not args.omit_t2_input)
+        net_i.load_state_dict(torch.load(args.inflammation_checkpoint, map_location='cuda:0')['state_dict'])
+        inflammation_model = net_i.model
+    else:
+        inflammation_model = None
+    net = DeepInflammation_CNN(backbone=args.backbone, lr=args.lr, use_t1_input=not args.omit_t1_input,
+                               use_t2_input=not args.omit_t2_input, inflammation_model=inflammation_model)
 
     """
         Train the inflammation network
     """
     print_frm('Starting training of the inflammation network')
-    trainer = _train_module(net, train, val, args, mode=INFLAMMATION_MODULE, monitor='val/i-roc-auc', monitor_mode='max')
+    trainer = _train_module(net, train, val, args)
     print_frm('Testing network')
-    _test_module(trainer, net, test, args, mode=INFLAMMATION_MODULE)
-
-    """
-        Train the intense inflammation network
-    """
-    print_frm('Starting training of the intense inflammation network')
-    trainer = _train_module(net, train, val, args, mode=INTENSE_INFLAMMATION_MODULE, monitor='val/ii-roc-auc', monitor_mode='max')
-    print_frm('Testing network')
-    _test_module(trainer, net, test, args, mode=INTENSE_INFLAMMATION_MODULE)
-
-    # """
-    #     Train the SPARCC module
-    # """
-    # print_frm('Starting training of the SPARCC module')
-    # trainer = _train_module(net, train, val, args, mode=SPARCC_MODULE, monitor='val/sim-mae', monitor_mode='min')
-    # print_frm('Testing network')
-    # _test_module(trainer, net, test, args, mode=SPARCC_MODULE)
-    #
-    # """
-    #     Finetune the whole thing
-    # """
-    # print_frm('Starting finetuning on the full network')
-    # trainer = _train_module(net, train, val, args, mode=JOINT, monitor='val/sim-mae', monitor_mode='min')
-    # print_frm('Testing network')
-    # _test_module(trainer, net, test, args, mode=JOINT)
+    _test_module(trainer, net, test, args)

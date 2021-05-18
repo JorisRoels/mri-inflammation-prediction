@@ -10,7 +10,7 @@ import torchvision.models as models
 SCORES_FILE = 'scores-corrected.csv'
 # suffix for the filtered data and merge directory name
 SUFFIX_FILTERED = '-filtered-new'
-MERGED_DIR = 'merged-new'
+MERGED_DIR = 'merged'
 
 # preprocessed data files
 SCORES_PP_FILE = 'scores.pickle'
