@@ -102,7 +102,7 @@ class SPARCCDataset(data.Dataset):
     :param optional seed: seed to fix the shuffling
     :param optional mode: training mode, influences the type of generated samples:
                     - INFLAMMATION_MODULE: [CHANNELS, QUARTILE_SIZE, QUARTILE_SIZE]
-                    - INTENSE_INFLAMMATION_MODULE: [CHANNELS, N_QUARTILES, QUARTILE_SIZE, QUARTILE_SIZE]
+                    - DEEP_INFLAMMATION_MODULE: [CHANNELS, N_QUARTILES, QUARTILE_SIZE, QUARTILE_SIZE]
                     - JOINT/SPARCC_MODULE: [CHANNELS, N_SLICES, N_SIDES, N_QUARTILES, QUARTILE_SIZE, QUARTILE_SIZE]
     :param optional preprocess_transform: augmentation transformer that is applied as a preprocessing on the original
                                           slices
@@ -230,11 +230,11 @@ class SPARCCDataset(data.Dataset):
             j, k, l, m = delinearize_index(i, (len(self.quartiles), N_SLICES, N_SIDES, N_QUARTILES))
             quartiles = self.quartiles[j, :, k, l, m, ...]
             i_scores = self.q_scores[j, k, l, m, ...]
-        elif self.mode == INTENSE_INFLAMMATION_MODULE:
+        elif self.mode == DEEP_INFLAMMATION_MODULE:
             j, k, l = delinearize_index(i, (len(self.quartiles), N_SLICES, N_SIDES))
             quartiles = self.quartiles[j, :, k, l, ...]
             i_scores = self.q_scores[j, k, l, ...]
-            ii_scores = self.s_scores_i[j, k, l]
+            di_scores = self.s_scores_d[j, k, l]
         else:
             quartiles = self.quartiles[i]
             i_scores = self.q_scores[i]
@@ -255,15 +255,15 @@ class SPARCCDataset(data.Dataset):
 
         if self.mode == INFLAMMATION_MODULE:
             return quartiles, i_scores
-        elif self.mode == INTENSE_INFLAMMATION_MODULE:
-            return quartiles, i_scores, ii_scores
+        elif self.mode == DEEP_INFLAMMATION_MODULE:
+            return quartiles, i_scores, di_scores
         else:
-            return quartiles, i_scores, ii_scores, di_scores, s_scores
+            return quartiles, i_scores, di_scores, ii_scores, s_scores
 
     def __len__(self):
         if self.mode == INFLAMMATION_MODULE:
             return self.quartiles.shape[0] * self.quartiles.shape[2] * self.quartiles.shape[3] * self.quartiles.shape[4]
-        elif self.mode == INTENSE_INFLAMMATION_MODULE:
+        elif self.mode == DEEP_INFLAMMATION_MODULE:
             return self.quartiles.shape[0] * self.quartiles.shape[2] * self.quartiles.shape[3]
         else:
             return self.quartiles.shape[0]

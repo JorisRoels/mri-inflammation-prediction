@@ -15,16 +15,16 @@ from models.sparcc_cnn import DeepInflammation_CNN, Inflammation_CNN
 from util.constants import *
 
 
-factor = {INFLAMMATION_MODULE: 64, INTENSE_INFLAMMATION_MODULE: 12, SPARCC_MODULE: 1, JOINT: 1}
+factor = {INFLAMMATION_MODULE: 64, DEEP_INFLAMMATION_MODULE: 12, SPARCC_MODULE: 1, JOINT: 1}
 
 
 def _train_module(net, train_data, val_data, args):
 
-    train_data.mode = INTENSE_INFLAMMATION_MODULE
-    val_data.mode = INTENSE_INFLAMMATION_MODULE
-    train_loader = DataLoader(train_data, batch_size=factor[INTENSE_INFLAMMATION_MODULE]*args.train_batch_size,
+    train_data.mode = DEEP_INFLAMMATION_MODULE
+    val_data.mode = DEEP_INFLAMMATION_MODULE
+    train_loader = DataLoader(train_data, batch_size=factor[DEEP_INFLAMMATION_MODULE] * args.train_batch_size,
                               num_workers=args.num_workers, pin_memory=True, shuffle=True)
-    val_loader = DataLoader(val_data, batch_size=factor[INTENSE_INFLAMMATION_MODULE]*args.test_batch_size,
+    val_loader = DataLoader(val_data, batch_size=factor[DEEP_INFLAMMATION_MODULE] * args.test_batch_size,
                             num_workers=args.num_workers, pin_memory=True)
     checkpoint_callback = ModelCheckpoint(save_top_k=5, verbose=True, monitor='val/roc-auc', mode='max')
     trainer = pl.Trainer(max_epochs=args.epochs, gpus=args.gpus, accelerator=args.accelerator,
@@ -38,9 +38,9 @@ def _train_module(net, train_data, val_data, args):
 
 def _test_module(trainer, net, test_data, args):
 
-    test_data.mode = INTENSE_INFLAMMATION_MODULE
+    test_data.mode = DEEP_INFLAMMATION_MODULE
     net.load_state_dict(torch.load(trainer.checkpoint_callback.best_model_path)['state_dict'])
-    test_loader = DataLoader(test_data, batch_size=factor[INTENSE_INFLAMMATION_MODULE]*args.test_batch_size,
+    test_loader = DataLoader(test_data, batch_size=factor[DEEP_INFLAMMATION_MODULE] * args.test_batch_size,
                              num_workers=args.num_workers, pin_memory=True)
     trainer.test(net, test_loader)
 
@@ -107,12 +107,12 @@ if __name__ == '__main__':
                          AddNoise(sigma_max=0.05)])
     train = SPARCCDataset(args.data_dir, args.si_joint_model, args.model_checkpoint_illium,
                           args.model_checkpoint_sacrum, range_split=(0, split[0]), transform=transform, seed=args.seed,
-                          mode=INTENSE_INFLAMMATION_MODULE, apply_weighting=not args.omit_weighting)
+                          mode=DEEP_INFLAMMATION_MODULE, apply_weighting=not args.omit_weighting)
     val = SPARCCDataset(args.data_dir, args.si_joint_model, args.model_checkpoint_illium, args.model_checkpoint_sacrum,
-                        range_split=(split[0], split[1]), seed=args.seed, mode=INTENSE_INFLAMMATION_MODULE,
+                        range_split=(split[0], split[1]), seed=args.seed, mode=DEEP_INFLAMMATION_MODULE,
                         apply_weighting=not args.omit_weighting)
     test = SPARCCDataset(args.data_dir, args.si_joint_model, args.model_checkpoint_illium, args.model_checkpoint_sacrum,
-                         range_split=(split[1], 1), seed=args.seed, mode=INTENSE_INFLAMMATION_MODULE,
+                         range_split=(split[1], 1), seed=args.seed, mode=DEEP_INFLAMMATION_MODULE,
                          apply_weighting=not args.omit_weighting)
     print_frm('Train data distribution: Deep infl: %.2f - No deep infl: %.2f' % (100*np.mean(train.s_scores_d),
                                                                                  100*np.mean(1-train.s_scores_d)))

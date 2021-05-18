@@ -245,11 +245,11 @@ class SPARCC_CNN_Module(nn.Module):
 
         :param x: the input, format depends on the training mode:
                     - INFLAMMATION_MODULE: [B, CHANNELS, QUARTILE_SIZE, QUARTILE_SIZE]
-                    - INTENSE_INFLAMMATION_MODULE: [B, CHANNELS, N_QUARTILES, QUARTILE_SIZE, QUARTILE_SIZE]
+                    - DEEP_INFLAMMATION_MODULE: [B, CHANNELS, N_QUARTILES, QUARTILE_SIZE, QUARTILE_SIZE]
                     - JOINT or SPARCC_MODULE: [B, CHANNELS, N_SLICES, N_SIDES, N_QUARTILES, QUARTILE_SIZE, QUARTILE_SIZE]
         :param mode: training mode:
                     - INFLAMMATION_MODULE: trains the inflammation classfier alone
-                    - INTENSE_INFLAMMATION_MODULE: trains both the inflammation and intense inflammation classifier
+                    - DEEP_INFLAMMATION_MODULE: trains both the inflammation and intense inflammation classifier
                     - JOINT: trains all classifiers and additionally returns sparcc predictions
         :return: output of the module (y_i, y_ii, y_s):
                     - y_i: inflammation prediction [B, N_CLASSES, N_SLICES, N_SIDES, N_QUARTILES]
@@ -271,7 +271,7 @@ class SPARCC_CNN_Module(nn.Module):
 
         # predict intense inflammation
         y_ii = None
-        if mode == INTENSE_INFLAMMATION_MODULE or mode == SPARCC_MODULE or mode == JOINT:
+        if mode == DEEP_INFLAMMATION_MODULE or mode == SPARCC_MODULE or mode == JOINT:
             # feature extractor
             x_s = x.view(-1, channels * N_QUARTILES, q, q)
             f_ii = self.feature_extractor_ii(x_s)
@@ -288,7 +288,7 @@ class SPARCC_CNN_Module(nn.Module):
         # reshape to proper format
         if mode == INFLAMMATION_MODULE:
             y_i = y_i.view(b, y_i.size(1))
-        elif mode == INTENSE_INFLAMMATION_MODULE:
+        elif mode == DEEP_INFLAMMATION_MODULE:
             y_i = y_i.view(b, y_i.size(1), N_QUARTILES)
         else:
             y_i = y_i.view(b, y_i.size(1), N_SLICES, N_SIDES, N_QUARTILES)
@@ -603,7 +603,7 @@ class SPARCC_CNN(pl.LightningModule):
     def base_step(self, batch, batch_idx, phase='train'):
         if self.training_mode == INFLAMMATION_MODULE:
             return self.base_step_i(batch, batch_idx, phase=phase)
-        elif self.training_mode == INTENSE_INFLAMMATION_MODULE:
+        elif self.training_mode == DEEP_INFLAMMATION_MODULE:
             return self.base_step_ii(batch, batch_idx, phase=phase)
         elif self.training_mode == SPARCC_MODULE:
             return self.base_step_s(batch, batch_idx, phase=phase)
@@ -622,12 +622,12 @@ class SPARCC_CNN(pl.LightningModule):
     def configure_optimizers(self):
         parameters = {INFLAMMATION_MODULE: list(self.model.feature_extractor_i.parameters()) +
                                            list(self.model.classifier_i.parameters()),
-                      INTENSE_INFLAMMATION_MODULE: list(self.model.feature_extractor_ii.parameters()) +
-                                                   list(self.model.classifier_ii.parameters()) +
-                                                   list(self.model.merge_q_module.parameters()),
+                      DEEP_INFLAMMATION_MODULE: list(self.model.feature_extractor_ii.parameters()) +
+                                                list(self.model.classifier_ii.parameters()) +
+                                                list(self.model.merge_q_module.parameters()),
                       SPARCC_MODULE: self.model.sparcc_module.parameters(),
                       JOINT: self.model.parameters()}
-        lr = {INFLAMMATION_MODULE: self.lr, INTENSE_INFLAMMATION_MODULE: self.lr, SPARCC_MODULE: self.lr,
+        lr = {INFLAMMATION_MODULE: self.lr, DEEP_INFLAMMATION_MODULE: self.lr, SPARCC_MODULE: self.lr,
               JOINT: self.lr}
         optimizer = torch.optim.Adam(parameters[self.training_mode], lr=lr[self.training_mode])
         optimizer_dict = {"optimizer": optimizer}
@@ -665,7 +665,7 @@ class SPARCC_CNN(pl.LightningModule):
                     self.log(phase + '/loss-' + case, self.running_loss[phase][case] / self.running_count[phase][case])
 
     def set_training_mode(self, mode):
-        if mode in [INFLAMMATION_MODULE, INTENSE_INFLAMMATION_MODULE, SPARCC_MODULE, JOINT]:
+        if mode in [INFLAMMATION_MODULE, DEEP_INFLAMMATION_MODULE, SPARCC_MODULE, JOINT]:
             self.training_mode = mode
 
     def _write_sparcc_results(self, y_true, y_pred, prefix=''):

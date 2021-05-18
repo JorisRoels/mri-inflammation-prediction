@@ -15,7 +15,7 @@ from models.sparcc_cnn import Inflammation_CNN
 from util.constants import *
 
 
-factor = {INFLAMMATION_MODULE: 64, INTENSE_INFLAMMATION_MODULE: 12, SPARCC_MODULE: 1, JOINT: 1}
+factor = {INFLAMMATION_MODULE: 64, DEEP_INFLAMMATION_MODULE: 12, SPARCC_MODULE: 1, JOINT: 1}
 
 
 def _train_module(net, train_data, val_data, args):

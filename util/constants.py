@@ -135,7 +135,7 @@ w_neg_intense_inflamm = 1 - w_pos_inflamm
 INTENSE_INFLAMMATION_WEIGHTS = [1 / w_neg_intense_inflamm, 1 / w_pos_intense_inflamm]
 
 INFLAMMATION_MODULE = 'inflammation-module'
-INTENSE_INFLAMMATION_MODULE = 'intense-inflammation-module'
+DEEP_INFLAMMATION_MODULE = 'deep-inflammation-module'
 SPARCC_MODULE = 'sparcc-module'
 JOINT = 'joint'
 
