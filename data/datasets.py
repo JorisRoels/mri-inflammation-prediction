@@ -1,4 +1,3 @@
-import numpy as np
 import torch
 import torch.utils.data as data
 import os
@@ -10,13 +9,13 @@ from neuralnets.data.base import slice_subset, _len_epoch
 from neuralnets.data.datasets import split_segmentation_transforms
 from neuralnets.networks.unet import UNet2D
 from sklearn.decomposition import PCA
-from sklearn.model_selection import KFold
+from sklearn.model_selection import StratifiedKFold
 
 from effdet import create_model
 from timm.models.layers import set_layer_config
 
 from util.constants import *
-from util.tools import load, save, delinearize_index
+from util.tools import load, delinearize_index
 
 
 class SPARCCRegressionDataset(data.Dataset):
@@ -148,10 +147,16 @@ class SPARCCDataset(data.Dataset):
         # select fold if necessary
         if self.folds is not None and self.f is not None:
             # k-fold validation
-            kf = KFold(n_splits=self.folds)
+            kf = StratifiedKFold(n_splits=self.folds)
             inds = np.arange(len(self.t1_data))
             t = 0 if self.train else 1
-            inds_split = list(kf.split(inds))[self.f][t]
+            y = np.zeros_like(inds)
+            for i in range(len(y)):
+                if mode == DEEP_INFLAMMATION_MODULE:
+                    y[i] = np.sum(self.scores[1][i]) > 0
+                else:
+                    y[i] = np.sum(self.scores[0][i]) > 0
+            inds_split = list(kf.split(inds, y))[self.f][t]
             self.scores = tuple([[scoreset[i] for i in inds_split] for scoreset in self.scores])
             self.slicenumbers = tuple([[sn[i] for i in inds_split] for sn in self.slicenumbers])
             self.t1_data = [self.t1_data[i] for i in inds_split]
