@@ -943,9 +943,8 @@ class Inflammation_CNN_Module(Inflammation_Module_Base):
 
 class Inflammation_CNN(Inflammation_Base):
 
-    def __init__(self, backbone='AlexNet', pretrained=False, lr=1e-3, use_t1_input=True,
-                 use_t2_input=True):
-        super().__init__(lr=lr, use_t1_input=use_t1_input, use_t2_input=use_t2_input, weights=INFLAMMATION_WEIGHTS)
+    def __init__(self, backbone='AlexNet', pretrained=False, lr=1e-3, use_t1_input=True, use_t2_input=True, weights=None):
+        super().__init__(lr=lr, use_t1_input=use_t1_input, use_t2_input=use_t2_input, weights=weights)
         # define model
         self.model = Inflammation_CNN_Module(backbone=backbone, pretrained=pretrained, use_t1_input=use_t1_input,
                                              use_t2_input=use_t2_input)
@@ -1047,9 +1046,8 @@ class DeepInflammation_CNN_Module(Inflammation_Module_Base):
 class DeepInflammation_CNN(Inflammation_Base):
 
     def __init__(self, backbone='AlexNet', pretrained=False, lr=1e-3, use_t1_input=True, use_t2_input=True,
-                 inflammation_model=None):
-        super().__init__(lr=lr, use_t1_input=use_t1_input, use_t2_input=use_t2_input,
-                         weights=INTENSE_INFLAMMATION_WEIGHTS)
+                 inflammation_model=None, weights=None):
+        super().__init__(lr=lr, use_t1_input=use_t1_input, use_t2_input=use_t2_input, weights=weights)
         # define model
         self.model = DeepInflammation_CNN_Module(backbone=backbone, pretrained=pretrained, use_t1_input=use_t1_input,
                                                  use_t2_input=use_t2_input, inflammation_model=inflammation_model)

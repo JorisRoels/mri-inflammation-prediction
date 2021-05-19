@@ -10,6 +10,7 @@ from neuralnets.data.base import slice_subset, _len_epoch
 from neuralnets.data.datasets import split_segmentation_transforms
 from neuralnets.networks.unet import UNet2D
 from sklearn.decomposition import PCA
+from sklearn.model_selection import KFold
 
 from effdet import create_model
 from timm.models.layers import set_layer_config
@@ -109,13 +110,16 @@ class SPARCCDataset(data.Dataset):
     :param optional apply_weighting: apply roi weighting or not
     """
 
-    def __init__(self, data_path, si_joint_model, illum_model, sacrum_model, range_split=(0, 1),
-                 transform=None, seed=0, mode=JOINT, preprocess_transform=None, apply_weighting=True):
+    def __init__(self, data_path, si_joint_model, illum_model, sacrum_model, range_split=(0, 1), folds=None, f=None,
+                 train=True, transform=None, seed=0, mode=JOINT, preprocess_transform=None, apply_weighting=True):
         self.data_path = data_path
         self.si_joint_model = si_joint_model
         self.illum_model = illum_model
         self.sacrum_model = sacrum_model
         self.range_split = range_split
+        self.folds = folds
+        self.f = f
+        self.train = train
         self.transform = transform
         self.seed = seed
         self.mode = mode
@@ -141,6 +145,18 @@ class SPARCCDataset(data.Dataset):
         self.t1_data = self.t1_data[start:stop]
         self.t2_data = self.t2_data[start:stop]
 
+        # select fold if necessary
+        if self.folds is not None and self.f is not None:
+            # k-fold validation
+            kf = KFold(n_splits=self.folds)
+            inds = np.arange(len(self.t1_data))
+            t = 0 if self.train else 1
+            inds_split = list(kf.split(inds))[self.f][t]
+            self.scores = tuple([[scoreset[i] for i in inds_split] for scoreset in self.scores])
+            self.slicenumbers = tuple([[sn[i] for i in inds_split] for sn in self.slicenumbers])
+            self.t1_data = [self.t1_data[i] for i in inds_split]
+            self.t2_data = [self.t2_data[i] for i in inds_split]
+
         # extract slices
         print_frm('    Extracting slices')
         self.t1_slices = self._extract_slices(self.t1_data, self.slicenumbers[1])
@@ -148,67 +164,24 @@ class SPARCCDataset(data.Dataset):
                                               target_size=self.t1_slices[0].shape[1:])
 
         # augmentation on slice level if necessary
-        c_dir = CACHE_DIR
         if self.preprocess_transform is not None:
             print_frm('    Augmenting slices...')
-            c_dir = CACHE_DIR + '-augmented'
-            if not os.path.exists(os.path.join(c_dir, SCORES_PP_FILE)) or \
-                not os.path.exists(os.path.join(c_dir, SLICENUMBERS_PP_FILE)) or \
-                not os.path.exists(os.path.join(c_dir, T1_PP_FILE)) or \
-                not os.path.exists(os.path.join(c_dir, T2_PP_FILE)):
-                self.scores, self.slicenumbers, self.t1_slices, self.t2_slices = \
-                    self._augment_slices(self.scores, self.slicenumbers, self.t1_slices, self.t2_slices)
-                print_frm('    Saving augmented slices...')
-                save(self.scores, os.path.join(c_dir, SCORES_PP_FILE))
-                save(self.slicenumbers, os.path.join(c_dir, SLICENUMBERS_PP_FILE))
-                save(self.t1_data, os.path.join(c_dir, T1_PP_FILE))
-                save(self.t2_data, os.path.join(c_dir, T2_PP_FILE))
-            else:
-                self.scores = load(os.path.join(c_dir, SCORES_PP_FILE))
-                self.slicenumbers = load(os.path.join(c_dir, SLICENUMBERS_PP_FILE))
-                self.t1_data = load(os.path.join(c_dir, T1_PP_FILE))
-                self.t2_data = load(os.path.join(c_dir, T2_PP_FILE))
+            self.scores, self.slicenumbers, self.t1_slices, self.t2_slices = \
+                self._augment_slices(self.scores, self.slicenumbers, self.t1_slices, self.t2_slices)
 
         # pre-compute SI joint locations and illium/sacrum segmentations
-        mkdir(c_dir)
-        SI_JOINTS_TMP_FILE = os.path.join(c_dir, '%s_%d_%d.%s' % (SI_JOINTS_TMP, start, stop, EXT))
-        SEG_I_TMP_FILE = os.path.join(c_dir, '%s_%d_%d.%s' % (SEG_I_TMP, start, stop, EXT))
-        SEG_S_TMP_FILE = os.path.join(c_dir, '%s_%d_%d.%s' % (SEG_S_TMP, start, stop, EXT))
-        if not os.path.exists(SI_JOINTS_TMP_FILE) or \
-           not os.path.exists(SEG_I_TMP_FILE) or \
-           not os.path.exists(SEG_S_TMP_FILE):
-            t1_slices_clahe = self._compute_clahe(self.t1_slices, clip_limit=T1_CLIPLIMIT)
-        if os.path.exists(SI_JOINTS_TMP_FILE):
-            print_frm('    Loading SI joint locations')
-            self.si_joints = np.load(SI_JOINTS_TMP_FILE)
-        else:
-            print_frm('    Computing SI joint locations')
-            self.si_joints = self._compute_joints(t1_slices_clahe, self.si_joint_model, out_file=SI_JOINTS_TMP_FILE)
-        if os.path.exists(SEG_I_TMP_FILE):
-            print_frm('    Loading illium segmentation')
-            self.illium = np.load(SEG_I_TMP_FILE)
-        else:
-            print_frm('    Computing illium segmentation')
-            self.illium = self._compute_segmentation(t1_slices_clahe, self.illum_model, out_file=SEG_I_TMP_FILE)
-        if os.path.exists(SEG_S_TMP_FILE):
-            print_frm('    Loading sacrum segmentation')
-            self.sacrum = np.load(SEG_S_TMP_FILE)
-        else:
-            print_frm('    Computing sacrum segmentation')
-            self.sacrum = self._compute_segmentation(t1_slices_clahe, self.sacrum_model, out_file=SEG_S_TMP_FILE)
+        t1_slices_clahe = self._compute_clahe(self.t1_slices, clip_limit=T1_CLIPLIMIT)
+        print_frm('    Computing SI joint locations')
+        self.si_joints = self._compute_joints(t1_slices_clahe, self.si_joint_model)
+        print_frm('    Computing illium segmentation')
+        self.illium = self._compute_segmentation(t1_slices_clahe, self.illum_model)
+        print_frm('    Computing sacrum segmentation')
+        self.sacrum = self._compute_segmentation(t1_slices_clahe, self.sacrum_model)
 
         # extract quartiles and corresponding weight maps
-        Q_TMP_FILE = os.path.join(c_dir, '%s_%d_%d.%s' % (Q_TMP, start, stop, EXT))
-        W_TMP_FILE = os.path.join(c_dir, '%s_%d_%d.%s' % (W_TMP, start, stop, EXT))
-        if os.path.exists(Q_TMP_FILE) and os.path.exists(W_TMP_FILE):
-            print_frm('    Loading quartiles and weights')
-            self.quartiles = np.load(Q_TMP_FILE)
-            self.weights = np.load(W_TMP_FILE)
-        else:
-            print_frm('    Extracting quartiles and weights')
-            self.quartiles, self.weights = self._extract_quartiles(self.t1_slices, self.t2_slices, self.si_joints,
-                                                                   self.illium, self.sacrum, Q_L, Q_D,
-                                                                   out_file=(Q_TMP_FILE, W_TMP_FILE))
+        print_frm('    Extracting quartiles and weights')
+        self.quartiles, self.weights = self._extract_quartiles(self.t1_slices, self.t2_slices, self.si_joints,
+                                                               self.illium, self.sacrum, Q_L, Q_D)
 
         # compute stats for z-normalization
         self.mu = [self.quartiles[:, i, ...].mean() for i in range(self.quartiles.shape[1])]
@@ -224,6 +197,14 @@ class SPARCCDataset(data.Dataset):
         # extract scores
         print_frm('    Extracting scores')
         self.q_scores, self.s_scores_i, self.s_scores_d, self.sparcc = self._extract_scores(self.scores)
+
+        # compute class weights
+        self.score_weights = []
+        for scores in [self.q_scores, self.s_scores_i, self.s_scores_d]:
+            pos = np.mean(scores)
+            neg = 1 - pos
+            w = [1 / neg, 1 / pos]
+            self.score_weights.append(w)
 
     def __getitem__(self, i):
         if self.mode == INFLAMMATION_MODULE:
