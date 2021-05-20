@@ -146,3 +146,5 @@ REPS = 5
 MEDIAN_THRESHOLD = 75
 
 METRICS = ['accuracy', 'balanced-accuracy', 'precision', 'recall', 'fpr', 'f1-score', 'roc-auc', 'loss']
+
+OPTIMAL_CKPT = 'best_model.ckpt'

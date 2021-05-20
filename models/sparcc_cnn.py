@@ -2,7 +2,6 @@ import pytorch_lightning as pl
 import os
 import csv
 
-import torch
 import torch.nn.functional as F
 
 from neuralnets.networks.blocks import *
@@ -436,12 +435,6 @@ class SPARCC_MLP(pl.LightningModule):
             # log scores
             self.log(prefix + 'acc' + suffix, acc)
             self.log(prefix + 'ba' + suffix, ba)
-
-        # # save results
-        # log_dir = self.logger.log_dir
-        # results = {'mae': m}
-        # mkdir(os.path.join(log_dir, os.path.dirname(prefix)))
-        # save(results, os.path.join(log_dir, prefix + str(self.global_step) + '.pickle'))
 
 
 class SPARCC_CNN(pl.LightningModule):
@@ -929,7 +922,7 @@ class Inflammation_CNN_Module(Inflammation_Module_Base):
         Perform forward propagation of the module
 
         :param x: the input, format should be [B, CHANNELS, QUARTILE_SIZE, QUARTILE_SIZE]
-        :return: inflammation prediction y_i with shape [B, N_CLASSES, N_SLICES, N_SIDES, N_QUARTILES]
+        :return: inflammation prediction y_i with shape [B, N_CLASSES]
         """
 
         # predict inflammation
@@ -1007,7 +1000,7 @@ class DeepInflammation_CNN_Module(Inflammation_Module_Base):
         Perform forward propagation of the module
 
         :param x: the input, should be of shape [B, CHANNELS, N_QUARTILES, QUARTILE_SIZE, QUARTILE_SIZE]
-        :return: intense inflammation prediction y_ii of shape [B, N_CLASSES, N_SLICES, N_SIDES]
+        :return: intense inflammation prediction y_ii of shape [B, N_CLASSES]
         """
 
         # get shape values

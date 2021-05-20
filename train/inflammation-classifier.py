@@ -2,8 +2,8 @@
 This script illustrates training of an inflammation classifier for patches along SI joints
 '''
 import argparse
-
-import numpy as np
+import os
+import shutil
 import pytorch_lightning as pl
 
 from torch.utils.data import DataLoader
@@ -161,6 +161,13 @@ if __name__ == '__main__':
         print_frm('Testing network')
         _test_module(trainer, net, val if args.folds is not None else test, args)
         metrics.append([float(trainer.logged_metrics['test/' + m].cpu()) for m in METRICS])
+
+        """
+            Save the final model
+        """
+        print_frm('Saving final model')
+        shutil.copyfile(trainer.checkpoint_callback.best_model_path, os.path.join(trainer.log_dir, OPTIMAL_CKPT))
+
 
     """
         Report final performance results
