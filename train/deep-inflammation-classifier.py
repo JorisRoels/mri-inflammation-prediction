@@ -49,11 +49,11 @@ def _test_module(trainer, net, test_data, args):
     return trainer
 
 
-def _get_inflammation_model(args, f=None):
+def _get_inflammation_model(args, f=None, weights=None):
     model = None
     if args.inflammation_checkpoint is not None:
         net = Inflammation_CNN(backbone=args.inflammation_backbone, use_t1_input=not args.omit_t1_input,
-                               use_t2_input=not args.omit_t2_input)
+                               use_t2_input=not args.omit_t2_input, weights=weights)
         if args.folds is None:
             ckpt_path = args.inflammation_checkpoint
         else:
@@ -168,7 +168,7 @@ if __name__ == '__main__':
             Build the network
         """
         print_frm('Building the network')
-        inflammation_model = _get_inflammation_model(args, f=i)
+        inflammation_model = _get_inflammation_model(args, f=i, weights=train.score_weights[0])
         weights = train.score_weights[2]
         net = DeepInflammation_CNN(backbone=args.backbone, lr=args.lr, use_t1_input=not args.omit_t1_input,
                                    use_t2_input=not args.omit_t2_input, inflammation_model=inflammation_model,
