@@ -57,7 +57,7 @@ def _get_inflammation_model(args, f=None):
         if args.folds is None:
             ckpt_path = args.inflammation_checkpoint
         else:
-            ckpt_path = os.path.join(args.inflammation_checkpoint, 'lightning_logs', 'version_' + str(f))
+            ckpt_path = os.path.join(args.inflammation_checkpoint, 'lightning_logs', 'version_' + str(f), OPTIMAL_CKPT)
         net.load_state_dict(torch.load(ckpt_path, map_location='cuda:0')['state_dict'])
         model = net.model
     return model
