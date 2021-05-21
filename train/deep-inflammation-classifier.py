@@ -49,6 +49,20 @@ def _test_module(trainer, net, test_data, args):
     return trainer
 
 
+def _get_inflammation_model(args, f=None):
+    model = None
+    if args.inflammation_checkpoint is not None:
+        net = Inflammation_CNN(backbone=args.inflammation_backbone, use_t1_input=not args.omit_t1_input,
+                               use_t2_input=not args.omit_t2_input)
+        if args.folds is None:
+            ckpt_path = args.inflammation_checkpoint
+        else:
+            ckpt_path = os.path.join(args.inflammation_checkpoint, 'lightning_logs', 'version_' + str(f))
+        net.load_state_dict(torch.load(ckpt_path, map_location='cuda:0')['state_dict'])
+        model = net.model
+    return model
+
+
 if __name__ == '__main__':
 
     # parse all the arguments
@@ -60,8 +74,9 @@ if __name__ == '__main__':
                         required=True)
     parser.add_argument("--model-checkpoint-sacrum", help="Path to the sacrum U-Net checkpoint", type=str,
                         required=True)
-    parser.add_argument("--inflammation-checkpoint", help="Path to the inflammation classification checkpoint",
-                        type=str, default=None)
+    parser.add_argument("--inflammation-checkpoint", help="Path to the inflammation classification checkpoint "
+                                                          "(directory in case of cross validation)", type=str,
+                        default=None)
     parser.add_argument("--inflammation-backbone", help="Backbone feature extractor of the inflammation model",
                         type=str, default='ResNet18')
     parser.add_argument("--repetitions", help="Number of repetitions", type=int, default=1)
@@ -153,13 +168,7 @@ if __name__ == '__main__':
             Build the network
         """
         print_frm('Building the network')
-        if args.inflammation_checkpoint is not None:
-            net_i = Inflammation_CNN(backbone=args.inflammation_backbone, use_t1_input=not args.omit_t1_input,
-                                     use_t2_input=not args.omit_t2_input, weights=train.score_weights[0])
-            net_i.load_state_dict(torch.load(args.inflammation_checkpoint, map_location='cuda:0')['state_dict'])
-            inflammation_model = net_i.model
-        else:
-            inflammation_model = None
+        inflammation_model = _get_inflammation_model(args, f=i)
         weights = train.score_weights[2]
         net = DeepInflammation_CNN(backbone=args.backbone, lr=args.lr, use_t1_input=not args.omit_t1_input,
                                    use_t2_input=not args.omit_t2_input, inflammation_model=inflammation_model,

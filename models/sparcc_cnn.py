@@ -818,7 +818,8 @@ class Inflammation_Base(pl.LightningModule):
 
     def __init__(self, lr=1e-3, use_t1_input=True, use_t2_input=True, weights=None):
         super().__init__()
-        self.loss_ce = nn.CrossEntropyLoss(weight=torch.Tensor(weights))
+        self.weights = None if weights is None else torch.Tensor(weights)
+        self.loss_ce = nn.CrossEntropyLoss(weight=self.weights)
         self.lr = lr
         self.use_t1_input = use_t1_input
         self.use_t2_input = use_t2_input
