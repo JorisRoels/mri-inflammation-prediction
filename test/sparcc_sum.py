@@ -40,7 +40,7 @@ def _process_fold(args, test, f=None, w_i=None, w_ii=None):
     print_frm('Loading the pretrained inflammation classifiers')
     net_i = Inflammation_CNN(backbone=args.backbone, use_t1_input=not args.omit_t1_input,
                              use_t2_input=not args.omit_t2_input, weights=w_i)
-    inflammation_model = net_i if args.ifc else None
+    inflammation_model = net_i.model if args.ifc else None
     net_ii = DeepInflammation_CNN(backbone=args.backbone, use_t1_input=not args.omit_t1_input,
                                   use_t2_input=not args.omit_t2_input, weights=w_ii,
                                   inflammation_model=inflammation_model)
