@@ -16,9 +16,10 @@ from timm.models.layers import set_layer_config
 
 from util.constants import *
 from util.tools import load, delinearize_index
+from train.sparcc_base import reg2class
 
 
-class SPARCCRegressionDataset(data.Dataset):
+class SPARCCBaseDataset(data.Dataset):
     """
     Dataset that returns feature vectors and corresponding SPARCC scores
 
@@ -26,16 +27,14 @@ class SPARCCRegressionDataset(data.Dataset):
     :param f_ii: intense inflammation feature vectors
     :param y: SPARCC scores
     :param optional f_red: target feature dimension (T-SNE dimensionality reduction will be applied if this is set)
-    :param optional categories: list of thresholds that define a discrete set of categories
     """
 
-    def __init__(self, f_i, f_ii, y, f_red=None, categories=None):
+    def __init__(self, f_i, f_ii, y, f_red=None):
 
         # save features and scores
         self.f_i = f_i
         self.f_ii = f_ii
         self.y = y
-        self.categories = categories
 
         # normalize data
         self.f_i -= np.mean(self.f_i)
@@ -66,27 +65,52 @@ class SPARCCRegressionDataset(data.Dataset):
             # update feature vector dimension
             self.f_dim = f_red
 
-        # discretize to categories if necessary
-        if categories is not None:
-            y_ = np.zeros_like(self.y, dtype=int)
-            for i in range(len(y_)):
-                j = 0
-                while j < len(categories):
-                    if self.y[i] < categories[j]:
-                        y_[i] = j
-                        j = len(categories) + 1
-                    else:
-                        j += 1
-                if j == len(categories):
-                    y_[i] = len(categories)
-            self.y = y_
-
-
     def __getitem__(self, i):
         return self.f_i[i], self.f_ii[i], self.y[i]
 
     def __len__(self):
         return self.n_samples
+
+
+class SPARCCRegressionDataset(SPARCCBaseDataset):
+    """
+    Dataset that returns feature vectors and corresponding SPARCC scores
+
+    :param f_i: inflammation feature vectors
+    :param f_ii: intense inflammation feature vectors
+    :param y: SPARCC scores
+    :param optional f_red: target feature dimension (T-SNE dimensionality reduction will be applied if this is set)
+    """
+
+    def __init__(self, f_i, f_ii, y, f_red=None):
+        super().__init__(f_i, f_ii, y, f_red=f_red)
+
+
+class SPARCCClassificationDataset(SPARCCBaseDataset):
+    """
+    Dataset that returns feature vectors and corresponding SPARCC scores
+
+    :param f_i: inflammation feature vectors
+    :param f_ii: intense inflammation feature vectors
+    :param y: SPARCC scores
+    :param optional f_red: target feature dimension (T-SNE dimensionality reduction will be applied if this is set)
+    :param optional categories: list of thresholds that define a discrete set of categories
+    :param optional k_ordinal: index that specifies the k'th case dataset for ordinal classification
+    """
+
+    def __init__(self, f_i, f_ii, y, f_red=None, categories=None, k_ordinal=None):
+        super().__init__(f_i, f_ii, y, f_red=f_red)
+
+        self.categories = categories
+        self.k_ordinal = k_ordinal
+
+        # discretize to categories if necessary
+        if categories is not None:
+            self.y = reg2class(self.y * 72, split=categories)
+
+            # prep data for ordinal classification
+            if k_ordinal is not None:
+                self.y = self.y > k_ordinal
 
 
 class SPARCCDataset(data.Dataset):

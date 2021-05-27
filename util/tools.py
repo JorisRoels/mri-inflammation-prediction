@@ -49,17 +49,18 @@ def fpr_score(y_true, y_pred):
     return fp / n
 
 
-def mae(s_true, s_pred, w=1):
-    return np.mean(w * np.abs(s_true - s_pred)) / np.sum(w)
-
-
-def wmae(s_true, s_pred, alpha=0):
-
-    # compute the weights
-    w = np.exp(- alpha * s_true)
-
-    # return the weighted MAE
-    return mae(s_true, s_pred, w=w)
+def mae(s_true, s_pred, weighted=False, beta=10, gamma=10, delta=0.2, reduce=True):
+    l1 = np.abs(s_pred - s_true)
+    if weighted:
+        w = 1 + np.exp(- beta * s_true) * np.exp(-gamma * l1) * l1 ** (delta)
+        w /= np.sum(w)
+        w *= len(l1)
+    else:
+        w = np.ones_like(l1)
+    if reduce:
+        return np.mean(w * l1)
+    else:
+        return w * l1
 
 
 def scores(y_true, y_pred):
@@ -89,3 +90,22 @@ def scores(y_true, y_pred):
     scores_opt = (acs[i], bas[i], rs[i], ps[i], fprs[i], fs[i])
 
     return acs, bas, rs, ps, fprs, fs, scores_opt
+
+# s_true = 0
+# s_pred = np.arange(0, 1, 0.001)
+# import matplotlib.pyplot as plt
+#
+# legend = []
+#
+# w, m = mae(s_true, s_pred, weighted=False)
+# plt.plot(s_pred, w)
+# legend.append('No-W (s_true=%.2f): mae=%.4f' % (s_true, m))
+#
+# for s_true in [0, 0.1, 0.25, 0.50]:
+#     w, m_w = mae(s_true, s_pred, weighted=True)
+#     w_, m_nw = mae(s_true, s_pred, weighted=False)
+#     legend.append('W (s_true=%.2f): mae_w=%.4f, mae=%.4f' % (s_true, m_w, m_nw))
+#     plt.plot(s_pred, w)
+#
+# plt.legend(legend)
+# plt.show()

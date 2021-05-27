@@ -10,66 +10,60 @@ from neuralnets.util.tools import set_seed
 from neuralnets.util.augmentation import *
 from sklearn.decomposition import PCA
 
-from data.datasets import SPARCCDataset, SPARCCRegressionDataset
-from models.sparcc_cnn import Inflammation_CNN, DeepInflammation_CNN, SPARCC_MLP_Regression
+from data.datasets import SPARCCDataset, SPARCCClassificationDataset
+from models.sparcc_cnn import Inflammation_CNN, DeepInflammation_CNN, SPARCC_MLP_Classification
 from util.constants import *
-from train.sparcc_base import get_n_folds, get_checkpoint_location, compute_inflammation_feature_vectors, validate_sparcc_scores
+from train.sparcc_base import get_n_folds, get_checkpoint_location, compute_inflammation_feature_vectors, \
+    validate_sparcc_scores, class2reg
 
 
-def _aggregate_inflammation_scores(y_i, y_ii):
-
-    n_samples = y_i.shape[0]
-    ts = np.arange(0, 1, 0.001)
-    s_pred = np.zeros((n_samples, len(ts)))
-    for i, t in enumerate(ts):
-        # apply thresholding
-        y_i_ = (y_i > t)
-        y_ii_ = (y_ii > t)
-
-        # compute sparcc scores
-        for j in range(n_samples):
-            s = (np.sum(y_i_[j]) + np.sum(y_ii_[j]))
-            s_pred[j, i] = s
-
-    return s_pred
-
-
-def _train_sparcc_regression_module(f_train, f_val, sparcc_train, sparcc_val, args):
+def _train_sparcc_subclassification_modules(f_train, f_val, sparcc_train, sparcc_val, args):
 
     f_i_train, f_ii_train = f_train
     f_i_val, f_ii_val = f_val
 
-    print_frm('Setting up regression dataset')
-    train = SPARCCRegressionDataset(f_i_train, f_ii_train, sparcc_train, f_red=args.f_red)
-    val = SPARCCRegressionDataset(f_i_val, f_ii_val, sparcc_val, f_red=args.f_red)
+    nets = []
+    for i in range(len(args.categories)):
+        print_frm('Starting training sub-classifier %d/%d' % (i+1, len(args.categories)))
 
-    """
-        Build the SPARCC regression model
-    """
-    print_frm('Building the MLP network')
-    net = SPARCC_MLP_Regression(lr=args.lr, f_dim=args.f_red, f_hidden=args.f_hidden)
+        print_frm('Setting up sub-classification (binarized) dataset')
+        train = SPARCCClassificationDataset(f_i_train, f_ii_train, sparcc_train, f_red=args.f_red,
+                                            categories=args.categories, k_ordinal=i)
+        val = SPARCCClassificationDataset(f_i_val, f_ii_val, sparcc_val, f_red=args.f_red, categories=args.categories,
+                                          k_ordinal=i)
 
-    """
-        Training regression model
-    """
-    print_frm('Training regression model')
-    train_loader = DataLoader(train, batch_size=args.train_batch_size, num_workers=args.num_workers, pin_memory=True,
-                              shuffle=True)
-    val_loader = DataLoader(val, batch_size=args.test_batch_size, num_workers=args.num_workers, pin_memory=True)
-    trainer = pl.Trainer(max_epochs=args.epochs, gpus=args.gpus, accelerator=args.accelerator,
-                         default_root_dir=args.log_dir, flush_logs_every_n_steps=args.log_freq,
-                         log_every_n_steps=args.log_freq, progress_bar_refresh_rate=args.log_refresh_rate,
-                         num_sanity_val_steps=0)
-    trainer.fit(net, train_loader, val_loader)
+        """
+            Build the (binary) SPARCC sub-classification model
+        """
+        print_frm('Building the binary MLP sub-classification network')
+        n_classes = 2
+        net = SPARCC_MLP_Classification(lr=args.lr, f_dim=args.f_red, f_hidden=args.f_hidden, n_classes=n_classes)
 
-    return net
+        """
+            Training sub-classification model
+        """
+        print_frm('Training sub-classification model')
+        train_loader = DataLoader(train, batch_size=args.train_batch_size, num_workers=args.num_workers, pin_memory=True,
+                                  shuffle=True)
+        val_loader = DataLoader(val, batch_size=args.test_batch_size, num_workers=args.num_workers, pin_memory=True)
+        trainer = pl.Trainer(max_epochs=args.epochs, gpus=args.gpus, accelerator=args.accelerator,
+                             default_root_dir=args.log_dir, flush_logs_every_n_steps=args.log_freq,
+                             log_every_n_steps=args.log_freq, progress_bar_refresh_rate=args.log_refresh_rate,
+                             num_sanity_val_steps=0)
+        trainer.fit(net, train_loader, val_loader)
+
+        """
+            Testing sub-classification model
+        """
+        print_frm('Testing sub-classification model')
+        trainer.test(net, val_loader)
+
+        nets.append(net)
+
+    return nets
 
 
-def _predict_sparcc_regression_module(net, f, args):
-
-    # set model to GPU and evaluation mode
-    net.to('cuda:0')
-    net.eval()
+def _predict_sparcc_classification_module(nets, f, args):
 
     # get samples
     f_is, f_iis = f
@@ -83,6 +77,7 @@ def _predict_sparcc_regression_module(net, f, args):
     # get dimensions
     n_samples, n_i, f_dim = f_is.shape
     _, n_ii, _ = f_iis.shape
+    n_classes = len(args.categories) + 1
 
     # apply dimensionality reduction
     f_is = np.reshape(f_is, (-1, f_dim))
@@ -92,22 +87,42 @@ def _predict_sparcc_regression_module(net, f, args):
     f_iis = PCA(n_components=args.f_red).fit_transform(f_iis)
     f_iis = np.reshape(f_iis, (n_samples, n_ii, args.f_red))
 
-    # compute the features
-    ys = np.zeros((n_samples))
-    for i in range(n_samples):
-        # get input
-        f_i = torch.from_numpy(f_is[i]).to('cuda:0').float()
-        f_ii = torch.from_numpy(f_iis[i]).to('cuda:0').float()
+    ysb = np.zeros((len(nets), n_samples))
+    ys = np.zeros((n_samples, n_classes))
+    for j, net in enumerate(nets):
 
-        # reshape to correct size
-        f_i = f_i.view(1, N_SLICES, N_SIDES, N_QUARTILES, f_i.size(-1))
-        f_ii = f_ii.view(1, N_SLICES, N_SIDES, f_ii.size(-1))
+        # set model to GPU and evaluation mode
+        net.to('cuda:0')
+        net.eval()
 
-        # compute sparcc prediction
-        y = net(f_i, f_ii)[0]
+        # compute the sub-classification scores
+        for i in range(n_samples):
+            # get input
+            f_i = torch.from_numpy(f_is[i]).to('cuda:0').float()
+            f_ii = torch.from_numpy(f_iis[i]).to('cuda:0').float()
 
-        # save the results
-        ys[i] = y.detach().cpu().numpy()
+            # reshape to correct size
+            f_i = f_i.view(1, N_SLICES, N_SIDES, N_QUARTILES, f_i.size(-1))
+            f_ii = f_ii.view(1, N_SLICES, N_SIDES, f_ii.size(-1))
+
+            # compute sub-classification result
+            y = torch.softmax(net(f_i, f_ii), dim=1)[0, 1]
+
+            # save the results
+            ysb[j, i] = y.detach().cpu().numpy()
+
+    # compute final classification result
+    ys[:, 0] = 1 - ysb[0, :]
+    ys[:, n_classes - 1] = ysb[n_classes - 2, :]
+    for i in range(1, n_classes - 1):
+        ys[:, i] = ysb[i-1, :] - ysb[i, :]
+
+    # normalize probabilities
+    ys = (ys - np.min(ys)) / (np.max(ys) - np.min(ys))
+    ys = ys / np.repeat(np.sum(ys, axis=1)[..., np.newaxis], 4, axis=1)
+
+    # derive class
+    ys = np.argmax(ys, axis=1)
 
     return ys
 
@@ -139,25 +154,31 @@ def _process_fold(args, train, val, test=None, f=None, w_i=None, w_ii=None):
         f_i_test, f_ii_test = compute_inflammation_feature_vectors(net_i, net_ii, test)
 
     """
-        Train SPARCC regression network
+        Train SPARCC sub-classification network
     """
-    print_frm('Training SPARCC regression network')
-    net_s = _train_sparcc_regression_module((f_i_train, f_ii_train), (f_i_val, f_ii_val), train.sparcc, val.sparcc,
-                                            args)
+    print_frm('Training SPARCC sub-classification network')
+    nets = _train_sparcc_subclassification_modules((f_i_train, f_ii_train), (f_i_val, f_ii_val), train.sparcc,
+                                                   val.sparcc, args)
 
     """
-        Predict SPARCC regression scores on validation set
+        Predict SPARCC classification scores on validation set
     """
-    print_frm('Predicting SPARCC regression scores on validation set')
+    print_frm('Predicting SPARCC classification scores on validation set')
     f = (f_i_val, f_ii_val) if test is None else (f_i_test, f_ii_test)
     s_true = val.sparcc if test is None else test.sparcc
-    s_pred = _predict_sparcc_regression_module(net_s, f, args)
+    y_pred = _predict_sparcc_classification_module(nets, f, args)
+
+    """
+        Convert class labels to regression values
+    """
+    print_frm('Converting class labels to regression values')
+    s_pred = class2reg(y_pred, split=args.categories)
 
     """
         Evaluate SPARCC scores
     """
     print_frm('Evaluating SPARCC scores')
-    maes_test, maews_test, accs_test = validate_sparcc_scores(s_pred[:, np.newaxis] * 72, s_true)
+    maes_test, maews_test, accs_test = validate_sparcc_scores(s_pred[:, np.newaxis], s_true)
 
     print_frm('Evaluation report:')
     print_frm('========================')
@@ -202,9 +223,10 @@ if __name__ == '__main__':
                         default=False)
     parser.add_argument("--f-red", help="Dimensionality of the reduced space", type=int, default=16)
     parser.add_argument("--f-hidden", help="Dimensionality of the hidden regression layer", type=int, default=128)
+    parser.add_argument("--categories", help="Categories that define the SPARCC classes", type=str, default="2,6,11")
 
     # optimization parameters
-    parser.add_argument("--epochs", help="Number of training epochs", type=int, default=3000)
+    parser.add_argument("--epochs", help="Number of training epochs", type=int, default=300)
     parser.add_argument("--lr", help="Learning rate for the optimization", type=float, default=1e-5)
 
     # compute parameters
@@ -223,6 +245,7 @@ if __name__ == '__main__':
     args = parser.parse_args()
     if args.train_val_test_split is not None:
         args.train_val_test_split = [float(item) for item in args.train_val_test_split.split(',')]
+    args.categories = [int(item) for item in args.categories.split(',')]
 
     """
     Fix seed (for reproducibility)

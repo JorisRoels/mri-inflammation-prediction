@@ -10,49 +10,34 @@ from neuralnets.util.tools import set_seed
 from neuralnets.util.augmentation import *
 from sklearn.decomposition import PCA
 
-from data.datasets import SPARCCDataset, SPARCCRegressionDataset
-from models.sparcc_cnn import Inflammation_CNN, DeepInflammation_CNN, SPARCC_MLP_Regression
+from data.datasets import SPARCCDataset, SPARCCClassificationDataset
+from models.sparcc_cnn import Inflammation_CNN, DeepInflammation_CNN, SPARCC_MLP_Classification
 from util.constants import *
-from train.sparcc_base import get_n_folds, get_checkpoint_location, compute_inflammation_feature_vectors, validate_sparcc_scores
+from train.sparcc_base import get_n_folds, get_checkpoint_location, compute_inflammation_feature_vectors, \
+    validate_sparcc_scores, class2reg
 
 
-def _aggregate_inflammation_scores(y_i, y_ii):
-
-    n_samples = y_i.shape[0]
-    ts = np.arange(0, 1, 0.001)
-    s_pred = np.zeros((n_samples, len(ts)))
-    for i, t in enumerate(ts):
-        # apply thresholding
-        y_i_ = (y_i > t)
-        y_ii_ = (y_ii > t)
-
-        # compute sparcc scores
-        for j in range(n_samples):
-            s = (np.sum(y_i_[j]) + np.sum(y_ii_[j]))
-            s_pred[j, i] = s
-
-    return s_pred
-
-
-def _train_sparcc_regression_module(f_train, f_val, sparcc_train, sparcc_val, args):
+def _train_sparcc_classification_module(f_train, f_val, sparcc_train, sparcc_val, args):
 
     f_i_train, f_ii_train = f_train
     f_i_val, f_ii_val = f_val
 
-    print_frm('Setting up regression dataset')
-    train = SPARCCRegressionDataset(f_i_train, f_ii_train, sparcc_train, f_red=args.f_red)
-    val = SPARCCRegressionDataset(f_i_val, f_ii_val, sparcc_val, f_red=args.f_red)
+    print_frm('Setting up classification dataset')
+    train = SPARCCClassificationDataset(f_i_train, f_ii_train, sparcc_train, f_red=args.f_red,
+                                        categories=args.categories)
+    val = SPARCCClassificationDataset(f_i_val, f_ii_val, sparcc_val, f_red=args.f_red, categories=args.categories)
 
     """
-        Build the SPARCC regression model
+        Build the SPARCC classification model
     """
     print_frm('Building the MLP network')
-    net = SPARCC_MLP_Regression(lr=args.lr, f_dim=args.f_red, f_hidden=args.f_hidden)
+    n_classes = len(args.categories) + 1
+    net = SPARCC_MLP_Classification(lr=args.lr, f_dim=args.f_red, f_hidden=args.f_hidden, n_classes=n_classes)
 
     """
-        Training regression model
+        Training classification model
     """
-    print_frm('Training regression model')
+    print_frm('Training classification model')
     train_loader = DataLoader(train, batch_size=args.train_batch_size, num_workers=args.num_workers, pin_memory=True,
                               shuffle=True)
     val_loader = DataLoader(val, batch_size=args.test_batch_size, num_workers=args.num_workers, pin_memory=True)
@@ -65,7 +50,7 @@ def _train_sparcc_regression_module(f_train, f_val, sparcc_train, sparcc_val, ar
     return net
 
 
-def _predict_sparcc_regression_module(net, f, args):
+def _predict_sparcc_classification_module(net, f, args):
 
     # set model to GPU and evaluation mode
     net.to('cuda:0')
@@ -104,7 +89,7 @@ def _predict_sparcc_regression_module(net, f, args):
         f_ii = f_ii.view(1, N_SLICES, N_SIDES, f_ii.size(-1))
 
         # compute sparcc prediction
-        y = net(f_i, f_ii)[0]
+        y = torch.argmax(net(f_i, f_ii))
 
         # save the results
         ys[i] = y.detach().cpu().numpy()
@@ -139,25 +124,31 @@ def _process_fold(args, train, val, test=None, f=None, w_i=None, w_ii=None):
         f_i_test, f_ii_test = compute_inflammation_feature_vectors(net_i, net_ii, test)
 
     """
-        Train SPARCC regression network
+        Train SPARCC classification network
     """
-    print_frm('Training SPARCC regression network')
-    net_s = _train_sparcc_regression_module((f_i_train, f_ii_train), (f_i_val, f_ii_val), train.sparcc, val.sparcc,
-                                            args)
+    print_frm('Training SPARCC classification network')
+    net_s = _train_sparcc_classification_module((f_i_train, f_ii_train), (f_i_val, f_ii_val), train.sparcc, val.sparcc,
+                                                args)
 
     """
-        Predict SPARCC regression scores on validation set
+        Predict SPARCC classification scores on validation set
     """
-    print_frm('Predicting SPARCC regression scores on validation set')
+    print_frm('Predicting SPARCC classification scores on validation set')
     f = (f_i_val, f_ii_val) if test is None else (f_i_test, f_ii_test)
     s_true = val.sparcc if test is None else test.sparcc
-    s_pred = _predict_sparcc_regression_module(net_s, f, args)
+    y_pred = _predict_sparcc_classification_module(net_s, f, args)
+
+    """
+        Convert class labels to regression values
+    """
+    print_frm('Converting class labels to regression values')
+    s_pred = class2reg(y_pred, split=args.categories)
 
     """
         Evaluate SPARCC scores
     """
     print_frm('Evaluating SPARCC scores')
-    maes_test, maews_test, accs_test = validate_sparcc_scores(s_pred[:, np.newaxis] * 72, s_true)
+    maes_test, maews_test, accs_test = validate_sparcc_scores(s_pred[:, np.newaxis], s_true)
 
     print_frm('Evaluation report:')
     print_frm('========================')
@@ -202,9 +193,10 @@ if __name__ == '__main__':
                         default=False)
     parser.add_argument("--f-red", help="Dimensionality of the reduced space", type=int, default=16)
     parser.add_argument("--f-hidden", help="Dimensionality of the hidden regression layer", type=int, default=128)
+    parser.add_argument("--categories", help="Categories that define the SPARCC classes", type=str, default="2,6,11")
 
     # optimization parameters
-    parser.add_argument("--epochs", help="Number of training epochs", type=int, default=3000)
+    parser.add_argument("--epochs", help="Number of training epochs", type=int, default=300)
     parser.add_argument("--lr", help="Learning rate for the optimization", type=float, default=1e-5)
 
     # compute parameters
@@ -223,6 +215,7 @@ if __name__ == '__main__':
     args = parser.parse_args()
     if args.train_val_test_split is not None:
         args.train_val_test_split = [float(item) for item in args.train_val_test_split.split(',')]
+    args.categories = [int(item) for item in args.categories.split(',')]
 
     """
     Fix seed (for reproducibility)
