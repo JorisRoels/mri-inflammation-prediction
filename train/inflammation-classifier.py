@@ -128,11 +128,12 @@ if __name__ == '__main__':
         train = SPARCCDataset(args.data_dir, args.si_joint_model, args.model_checkpoint_illium,
                               args.model_checkpoint_sacrum, range_split=range_split[0], folds=args.folds, f=i,
                               train=True, transform=transform, seed=args.seed, mode=INFLAMMATION_MODULE,
+                              use_t1_input=not args.omit_t1_input, use_t2_input=not args.omit_t2_input,
                               apply_weighting=not args.omit_weighting)
         val = SPARCCDataset(args.data_dir, args.si_joint_model, args.model_checkpoint_illium,
                             args.model_checkpoint_sacrum, range_split=range_split[1], folds=args.folds, f=i,
-                            train=False, seed=args.seed, mode=INFLAMMATION_MODULE,
-                            apply_weighting=not args.omit_weighting)
+                            train=False, seed=args.seed, mode=INFLAMMATION_MODULE, use_t1_input=not args.omit_t1_input,
+                            use_t2_input=not args.omit_t2_input, apply_weighting=not args.omit_weighting)
         print_frm('Train data distribution: Infl: %.2f - Non-infl: %.2f' % (100*np.mean(train.q_scores),
                                                                             100*np.mean(1-train.q_scores)))
         print_frm('Val data distribution: Infl: %.2f - Non-infl: %.2f' % (100*np.mean(val.q_scores),
@@ -140,7 +141,8 @@ if __name__ == '__main__':
         if args.folds is None:
             test = SPARCCDataset(args.data_dir, args.si_joint_model, args.model_checkpoint_illium,
                                  args.model_checkpoint_sacrum, range_split=range_split[2], seed=args.seed,
-                                 mode=INFLAMMATION_MODULE, apply_weighting=not args.omit_weighting)
+                                 mode=INFLAMMATION_MODULE, use_t1_input=not args.omit_t1_input,
+                                 use_t2_input=not args.omit_t2_input, apply_weighting=not args.omit_weighting)
             print_frm('Test data distribution: Infl: %.2f - Non-infl: %.2f' % (100*np.mean(test.q_scores),
                                                                                100*np.mean(1-test.q_scores)))
 

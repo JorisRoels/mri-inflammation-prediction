@@ -327,14 +327,6 @@ class Inflammation_Base(pl.LightningModule):
     def forward(self, x):
         return self.model(x)
 
-    def _select_relevant_inputs(self, x):
-        if self.use_t1_input and self.use_t2_input:
-            return x
-        elif self.use_t2_input:
-            return x[:, 1:2]
-        else:
-            return x[:, 0:1]
-
     def base_step(self, batch, batch_idx, phase='train'):
         pass
 
@@ -448,7 +440,6 @@ class Inflammation_CNN(Inflammation_Base):
         # transfer to suitable device and get labels
         x, y_i = batch
         x = x.float()
-        x = self._select_relevant_inputs(x)
         y_i = y_i.long()
 
         # forward prop
@@ -551,7 +542,6 @@ class DeepInflammation_CNN(Inflammation_Base):
         # transfer to suitable device and get labels
         x, _, y_ii = batch
         x = x.float()
-        x = self._select_relevant_inputs(x)
         y_ii = y_ii.long()
 
         # forward prop

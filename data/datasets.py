@@ -134,7 +134,8 @@ class SPARCCDataset(data.Dataset):
     """
 
     def __init__(self, data_path, si_joint_model, illum_model, sacrum_model, range_split=(0, 1), folds=None, f=None,
-                 train=True, transform=None, seed=0, mode=JOINT, preprocess_transform=None, apply_weighting=True):
+                 train=True, transform=None, seed=0, mode=JOINT, preprocess_transform=None, use_t1_input=True,
+                 use_t2_input=True, apply_weighting=True):
         self.data_path = data_path
         self.si_joint_model = si_joint_model
         self.illum_model = illum_model
@@ -147,6 +148,8 @@ class SPARCCDataset(data.Dataset):
         self.seed = seed
         self.mode = mode
         self.preprocess_transform = preprocess_transform
+        self.use_t1_input = use_t1_input
+        self.use_t2_input = use_t2_input
         self.apply_weighting = apply_weighting
 
         # load all necessary files
@@ -222,6 +225,12 @@ class SPARCCDataset(data.Dataset):
         if apply_weighting:
             for c in range(self.quartiles.shape[1]):
                 self.quartiles[:, c, ...] = self.quartiles[:, c, ...] * self.weights
+
+        # filter T1/T2 quartiles if necessary
+        if self.use_t2_input and not self.use_t1_input:
+            self.quartiles = self.quartiles[:, 1:2, ...]
+        elif self.use_t1_input and not self.use_t2_input:
+            self.quartiles = self.quartiles[:, 0:1, ...]
 
         # extract scores
         print_frm('    Extracting scores')

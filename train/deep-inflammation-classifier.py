@@ -148,10 +148,12 @@ if __name__ == '__main__':
         train = SPARCCDataset(args.data_dir, args.si_joint_model, args.model_checkpoint_illium,
                               args.model_checkpoint_sacrum, range_split=range_split[0], folds=args.folds, f=i,
                               train=True, transform=transform, seed=args.seed, mode=DEEP_INFLAMMATION_MODULE,
+                              use_t1_input=not args.omit_t1_input, use_t2_input=not args.omit_t2_input,
                               apply_weighting=not args.omit_weighting)
         val = SPARCCDataset(args.data_dir, args.si_joint_model, args.model_checkpoint_illium,
                             args.model_checkpoint_sacrum, range_split=range_split[1], folds=args.folds, f=i,
                             train=False, seed=args.seed, mode=DEEP_INFLAMMATION_MODULE,
+                            use_t1_input=not args.omit_t1_input, use_t2_input=not args.omit_t2_input,
                             apply_weighting=not args.omit_weighting)
         print_frm('Train data distribution: Deep infl: %.2f - No deep infl: %.2f' % (100*np.mean(train.s_scores_d),
                                                                                      100*np.mean(1-train.s_scores_d)))
@@ -160,7 +162,8 @@ if __name__ == '__main__':
         if args.folds is None:
             test = SPARCCDataset(args.data_dir, args.si_joint_model, args.model_checkpoint_illium,
                                  args.model_checkpoint_sacrum, range_split=range_split[2], seed=args.seed,
-                                 mode=DEEP_INFLAMMATION_MODULE, apply_weighting=not args.omit_weighting)
+                                 mode=DEEP_INFLAMMATION_MODULE, use_t1_input=not args.omit_t1_input,
+                                 use_t2_input=not args.omit_t2_input, apply_weighting=not args.omit_weighting)
             print_frm('Test data distribution: Deep infl: %.2f - No deep infl: %.2f' % (100*np.mean(test.s_scores_d),
                                                                                         100*np.mean(1-test.s_scores_d)))
 

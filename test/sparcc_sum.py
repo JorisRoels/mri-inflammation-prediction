@@ -154,6 +154,7 @@ if __name__ == '__main__':
             print_frm('Loading data')
             val = SPARCCDataset(args.data_dir, args.si_joint_model, args.model_checkpoint_illium,
                                 args.model_checkpoint_sacrum, range_split=range_split, folds=folds, f=f, train=False,
+                                use_t1_input=not args.omit_t1_input, use_t2_input=not args.omit_t2_input,
                                 seed=args.seed, mode=JOINT)
             m, mw, a = _process_fold(args, val, f, w_i=val.score_weights[0], w_ii=val.score_weights[2])
             maes[f], maews[f], accs[f] = np.min(m), np.min(mw), np.max(a)
@@ -172,11 +173,14 @@ if __name__ == '__main__':
         print_frm('Loading data')
         val = SPARCCDataset(args.data_dir, args.si_joint_model, args.model_checkpoint_illium,
                             args.model_checkpoint_sacrum, range_split=range_split, folds=folds, f=f, train=False,
-                            seed=args.seed, mode=JOINT)
+                            use_t1_input=not args.omit_t1_input, use_t2_input=not args.omit_t2_input, seed=args.seed,
+                            mode=JOINT)
         maes, maews, accs = _process_fold(args, val, f, w_i=val.score_weights[0], w_ii=val.score_weights[2])
     else:  # process a specific train test split
         split = args.train_val_test_split
         print_frm('Loading data')
         test = SPARCCDataset(args.data_dir, args.si_joint_model, args.model_checkpoint_illium,
-                             args.model_checkpoint_sacrum, range_split=(split[1], 1), seed=args.seed, mode=JOINT)
+                             args.model_checkpoint_sacrum, range_split=(split[1], 1),
+                             use_t1_input=not args.omit_t1_input, use_t2_input=not args.omit_t2_input, seed=args.seed,
+                             mode=JOINT)
         maes, emds, accs = _process_fold(args, test, w_i=test.score_weights[0], w_ii=test.score_weights[2])
