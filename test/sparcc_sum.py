@@ -40,8 +40,10 @@ def _process_fold(args, test, f=None, w_i=None, w_ii=None):
     print_frm('Loading the pretrained inflammation classifiers')
     net_i = Inflammation_CNN(backbone=args.backbone, use_t1_input=not args.omit_t1_input,
                              use_t2_input=not args.omit_t2_input, weights=w_i)
+    inflammation_model = net_i if args.ifc else None
     net_ii = DeepInflammation_CNN(backbone=args.backbone, use_t1_input=not args.omit_t1_input,
-                                  use_t2_input=not args.omit_t2_input, weights=w_ii)
+                                  use_t2_input=not args.omit_t2_input, weights=w_ii,
+                                  inflammation_model=inflammation_model)
     ckpt_i_file = get_checkpoint_location(args.inflammation_checkpoint, f) if f is not None \
         else args.inflammation_checkpoint
     ckpt_ii_file = get_checkpoint_location(args.deep_inflammation_checkpoint, f) if f is not None \
@@ -122,6 +124,8 @@ if __name__ == '__main__':
                         default=False)
     parser.add_argument("--omit_weighting", help="Boolean flag that specifies ROI masking", action='store_true',
                         default=False)
+    parser.add_argument("--ifc", help="Boolean flag that specifies inflammation feature concatenation",
+                        action='store_true', default=False)
 
     # optimization parameters
     parser.add_argument("--epochs", help="Number of training epochs", type=int, default=3000)
