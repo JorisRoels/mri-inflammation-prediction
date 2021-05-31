@@ -90,6 +90,7 @@ if __name__ == '__main__':
     parser.add_argument("--log_freq", help="Frequency to log results", type=int, default=50)
     parser.add_argument("--log_refresh_rate", help="Refresh rate for logging", type=int, default=1)
     parser.add_argument("--seed", help="Seed for reproducibility", type=int, default=0)
+    parser.add_argument("--clean-up", help="Boolean flag that specifies ROI masking", action='store_true', default=False)
 
     args = parser.parse_args()
     args.train_val_test_split = [float(item) for item in args.train_val_test_split.split(',')]
@@ -169,6 +170,13 @@ if __name__ == '__main__':
         """
         print_frm('Saving final model')
         shutil.copyfile(trainer.checkpoint_callback.best_model_path, os.path.join(trainer.log_dir, OPTIMAL_CKPT))
+
+        """
+            Clean up
+        """
+        print_frm('Cleaning up')
+        if args.clean_up:
+            os.rmdir(os.path.join(trainer.log_dir, 'checkpoints'))
 
 
     """
