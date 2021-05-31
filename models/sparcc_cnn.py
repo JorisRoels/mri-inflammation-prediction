@@ -323,6 +323,7 @@ class Inflammation_Base(pl.LightningModule):
         self.lr = lr
         self.use_t1_input = use_t1_input
         self.use_t2_input = use_t2_input
+        self.on_epoch_start()
 
     def forward(self, x):
         return self.model(x)
