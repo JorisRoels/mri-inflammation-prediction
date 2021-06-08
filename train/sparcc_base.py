@@ -140,9 +140,15 @@ def class2reg(y, split=(2, 6, 11)):
 
 
 def validate_sparcc_scores(s_pred, s_true):
+    """
+    Validate the SPARCC scores
 
+    :param s_pred: predictions of the sparcc score (in the [0, 72] interval)
+    :param s_true: ground truth sparcc scores (in the [0, 72] interval)
+    :return: MAE, MAE-W and accuracy metrics
+    """
     s_pred_c = reg2class(s_pred)
-    s_true_c = reg2class(s_true * 72)
+    s_true_c = reg2class(s_true)
 
     n_samples, len_t = s_pred.shape
     maes = np.zeros((len_t))
@@ -152,7 +158,7 @@ def validate_sparcc_scores(s_pred, s_true):
 
         # evaluate metrics
         maes[i] = mae(s_true, s_pred[:, i])
-        maews[i] = mae(s_true / 72, s_pred[:, i] / 72, weighted=True) * 72
+        maews[i] = mae(s_true, s_pred[:, i], weighted=True)
         accs[i] = accuracy_score(s_true_c, s_pred_c[:, i])
 
     return maes, maews, accs
