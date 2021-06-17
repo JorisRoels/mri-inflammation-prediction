@@ -46,7 +46,7 @@ def compute_inflammation_feature_vectors(net_i, net_ii, ds):
 
         # compute (deep) inflammation predictions
         x_sq = x_i.view(-1, channels_i, q, q)
-        x_s = x_di.view(-1, channels_di, n_quartiles, q, q)
+        x_s = x_di.view(-1, channels_di*n_quartiles, q, q)
         f_i = torch.flatten(net_i.model.feature_extractor(x_sq), 1)
         f_ii = torch.flatten(net_ii.model.feature_extractor(x_s), 1)
 
