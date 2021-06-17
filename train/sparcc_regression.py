@@ -258,7 +258,7 @@ if __name__ == '__main__':
             val = SPARCCDataset(args.data_dir, args.si_joint_model, args.model_checkpoint_illium,
                                 args.model_checkpoint_sacrum, range_split=range_split, folds=folds, f=f, train=False,
                                 seed=args.seed, mode=JOINT)
-            m, mw, a = _process_fold(args, train, val, f=f, w_i=val.score_weights[0], w_ii=val.score_weights[2])
+            m, mw, a = _process_fold(args, train, val, f=f, w_i=val.score_weights[0], w_di=val.score_weights[2])
             maes[f], maews[f], accs[f] = np.min(m), np.min(mw), np.max(a)
 
         print_frm('Final evaluation report:')
