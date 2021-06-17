@@ -63,6 +63,7 @@ def _train_sparcc_regression_module(f_train, f_val, sparcc_train, sparcc_val, ar
                          log_every_n_steps=args.log_freq, progress_bar_refresh_rate=args.log_refresh_rate,
                          num_sanity_val_steps=0, callbacks=[checkpoint_callback], deterministic=True)
     trainer.fit(net, train_loader, val_loader)
+    trainer.test(net, val_loader)
 
     return net
 
