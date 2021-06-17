@@ -12,6 +12,7 @@ from sklearn.metrics import roc_auc_score, accuracy_score, balanced_accuracy_sco
 from util.constants import *
 from util.losses import SPARCCSimilarityLoss
 from util.tools import scores, save, mae
+from train.sparcc_base import reg2class
 
 
 class SPARCC_Prediction_Module(nn.Module):
@@ -19,11 +20,12 @@ class SPARCC_Prediction_Module(nn.Module):
     Transforms a set of I and II feature vectors into a SPARCC score
     """
 
-    def __init__(self, f_dim=512, f_hidden=128, n_classes=1):
+    def __init__(self, f_dim=512, f_hidden=128, n_classes=1, split=(2, 6, 11)):
         super().__init__()
 
         p = 0.50
         self.n_classes = n_classes
+        self.split = split
 
         self.i_module = nn.Sequential(
             nn.Linear(N_SLICES * N_SIDES * N_QUARTILES * f_dim, f_hidden),
@@ -140,10 +142,10 @@ class SPARCC_Base(pl.LightningModule):
 
 class SPARCC_MLP_Regression(SPARCC_Base):
 
-    def __init__(self, f_dim=512, f_hidden=128, lr=1e-3):
+    def __init__(self, f_dim=512, f_hidden=128, lr=1e-3, split=(2, 6, 11)):
         super().__init__(f_dim=f_dim, f_hidden=f_hidden, lr=lr)
 
-        self.model = SPARCC_Prediction_Module(f_dim=f_dim, f_hidden=f_hidden, n_classes=1)
+        self.model = SPARCC_Prediction_Module(f_dim=f_dim, f_hidden=f_hidden, split=split, n_classes=1)
 
         # define loss function
         # self.loss_sim = SPARCCSimilarityLoss(w_sparcc=w_sparcc)
@@ -174,14 +176,32 @@ class SPARCC_MLP_Regression(SPARCC_Base):
     def _log_prediction_metrics(self, y_true, y_pred, prefix='', suffix=''):
 
         # flatten everything
-        y_pred = y_pred.flatten()
-        y_true = y_true.flatten()
+        y_pred = y_pred.flatten() * 72
+        y_true = y_true.flatten() * 72
+
+        # extract classes
+        s_pred_c = reg2class(y_pred)
+        s_true_c = reg2class(y_true)
+
+        split = [0, *self.model.split]
 
         # compute scores
         m = mae(y_true, y_pred)
+        mw = np.zeros((len(split)))
+        for j in range(len(split)):
+            if j == len(split) - 1:
+                mask = (y_true >= split[j])
+            else:
+                mask = ((y_true >= split[j]) * (y_true < split[j + 1]))
+            if mask.sum() != 0:
+                mw[j] = mae(y_true[mask], y_pred[mask])
+        mw = mw.mean()
+        a = accuracy_score(s_true_c, s_pred_c)
 
         # log scores
         self.log(prefix + 'mae' + suffix, m)
+        self.log(prefix + 'maew' + suffix, mw)
+        self.log(prefix + 'acc' + suffix, a)
 
 
 class SPARCC_MLP_Classification(SPARCC_Base):

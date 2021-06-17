@@ -9,6 +9,7 @@ from neuralnets.util.io import print_frm
 from neuralnets.util.tools import set_seed
 from neuralnets.util.augmentation import *
 from sklearn.decomposition import PCA
+from pytorch_lightning.callbacks import ModelCheckpoint
 
 from data.datasets import SPARCCDataset, SPARCCRegressionDataset
 from models.sparcc_cnn import Inflammation_CNN, DeepInflammation_CNN, SPARCC_MLP_Regression
@@ -56,10 +57,11 @@ def _train_sparcc_regression_module(f_train, f_val, sparcc_train, sparcc_val, ar
     train_loader = DataLoader(train, batch_size=args.train_batch_size, num_workers=args.num_workers, pin_memory=True,
                               shuffle=True)
     val_loader = DataLoader(val, batch_size=args.test_batch_size, num_workers=args.num_workers, pin_memory=True)
+    checkpoint_callback = ModelCheckpoint(save_top_k=5, verbose=True, monitor='val/maew', mode='min')
     trainer = pl.Trainer(max_epochs=args.epochs, gpus=args.gpus, accelerator=args.accelerator,
                          default_root_dir=args.log_dir, flush_logs_every_n_steps=args.log_freq,
                          log_every_n_steps=args.log_freq, progress_bar_refresh_rate=args.log_refresh_rate,
-                         num_sanity_val_steps=0)
+                         num_sanity_val_steps=0, callbacks=[checkpoint_callback], deterministic=True)
     trainer.fit(net, train_loader, val_loader)
 
     return net
@@ -86,10 +88,11 @@ def _predict_sparcc_regression_module(net, f, args):
 
     # apply dimensionality reduction
     f_is = np.reshape(f_is, (-1, f_dim))
-    f_is = PCA(n_components=args.f_red).fit_transform(f_is)
-    f_is = np.reshape(f_is, (n_samples, n_i, args.f_red))
     f_iis = np.reshape(f_iis, (-1, f_dim))
-    f_iis = PCA(n_components=args.f_red).fit_transform(f_iis)
+    if args.f_red is not None:
+        f_is = PCA(n_components=args.f_red).fit_transform(f_is)
+        f_iis = PCA(n_components=args.f_red).fit_transform(f_iis)
+    f_is = np.reshape(f_is, (n_samples, n_i, args.f_red))
     f_iis = np.reshape(f_iis, (n_samples, n_ii, args.f_red))
 
     # compute the features
@@ -153,7 +156,7 @@ def _process_fold(args, train, val, f=None, w_i=None, w_di=None):
         Evaluate SPARCC scores
     """
     print_frm('Evaluating SPARCC scores')
-    maes_test, maews_test, accs_test = validate_sparcc_scores(s_pred[:, np.newaxis] * 72, s_true)
+    maes_test, maews_test, accs_test = validate_sparcc_scores(s_pred[:, np.newaxis] * 72, s_true * 72)
 
     print_frm('Evaluation report:')
     print_frm('========================')
@@ -213,7 +216,7 @@ if __name__ == '__main__':
     parser.add_argument("--f-hidden", help="Dimensionality of the hidden regression layer", type=int, default=128)
 
     # optimization parameters
-    parser.add_argument("--epochs", help="Number of training epochs", type=int, default=3000)
+    parser.add_argument("--epochs", help="Number of training epochs", type=int, default=30)
     parser.add_argument("--lr", help="Learning rate for the optimization", type=float, default=1e-5)
 
     # compute parameters
@@ -245,7 +248,7 @@ if __name__ == '__main__':
     # transform = Compose([RotateRandom(angle=10), RandomDeformation()])
     transform = None
     if args.fold is None and args.train_val_test_split is None:  # cross validation
-        range_split = (0, 1)
+        range_split = (0, 0.1)
         maes, maews, accs = np.zeros((folds)), np.zeros((folds)), np.zeros((folds))
         for f in range(folds):
             print_frm('')

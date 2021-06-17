@@ -66,7 +66,6 @@ def _process_fold(args, test_i, test_di, f=None, w_i=None, w_di=None):
     """
     print_frm('Evaluating SPARCC scores')
     maes_test, maews_test, accs_test = validate_sparcc_scores(s_test, test_i.sparcc * 72)
-    maews_test = maews_test.mean(axis=1)
 
     print_frm('Evaluation report:')
     print_frm('========================')
