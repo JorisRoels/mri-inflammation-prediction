@@ -216,7 +216,7 @@ if __name__ == '__main__':
     parser.add_argument("--f-hidden", help="Dimensionality of the hidden regression layer", type=int, default=128)
 
     # optimization parameters
-    parser.add_argument("--epochs", help="Number of training epochs", type=int, default=30)
+    parser.add_argument("--epochs", help="Number of training epochs", type=int, default=3000)
     parser.add_argument("--lr", help="Learning rate for the optimization", type=float, default=1e-5)
 
     # compute parameters
@@ -229,7 +229,7 @@ if __name__ == '__main__':
     # logging parameters
     parser.add_argument("--log_dir", help="Logging directory", type=str, default='logs')
     parser.add_argument("--log_freq", help="Frequency to log results", type=int, default=50)
-    parser.add_argument("--log_refresh_rate", help="Refresh rate for logging", type=int, default=1)
+    parser.add_argument("--log_refresh_rate", help="Refresh rate for logging", type=int, default=100)
     parser.add_argument("--seed", help="Seed for reproducibility", type=int, default=0)
 
     args = parser.parse_args()
@@ -248,7 +248,7 @@ if __name__ == '__main__':
     # transform = Compose([RotateRandom(angle=10), RandomDeformation()])
     transform = None
     if args.fold is None and args.train_val_test_split is None:  # cross validation
-        range_split = (0, 0.1)
+        range_split = (0, 1)
         maes, maews, accs = np.zeros((folds)), np.zeros((folds)), np.zeros((folds))
         for f in range(folds):
             print_frm('')
