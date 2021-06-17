@@ -492,7 +492,7 @@ class DeepInflammation_CNN_Module(Inflammation_Module_Base):
         """
         Perform forward propagation of the module
 
-        :param x: the input, should be of shape [B, CHANNELS, N_QUARTILES, QUARTILE_SIZE, QUARTILE_SIZE]
+        :param x: the input, should be of shape [B, N_SIDES, N_QUARTILES, QUARTILE_SIZE, QUARTILE_SIZE]
         :return: intense inflammation prediction y_ii of shape [B, N_CLASSES]
         """
 
