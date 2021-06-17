@@ -252,13 +252,24 @@ if __name__ == '__main__':
             print_frm('Processing fold %d/%d' % (f+1, folds))
             print_frm('')
             print_frm('Loading data')
-            train = SPARCCDataset(args.data_dir, args.si_joint_model, args.model_checkpoint_illium,
-                                  args.model_checkpoint_sacrum, range_split=range_split, folds=folds, f=f, train=True,
-                                  seed=args.seed, mode=JOINT, preprocess_transform=transform)
-            val = SPARCCDataset(args.data_dir, args.si_joint_model, args.model_checkpoint_illium,
-                                args.model_checkpoint_sacrum, range_split=range_split, folds=folds, f=f, train=False,
-                                seed=args.seed, mode=JOINT)
-            m, mw, a = _process_fold(args, train, val, f=f, w_i=val.score_weights[0], w_di=val.score_weights[2])
+            train_i = SPARCCDataset(args.data_dir, args.si_joint_model, args.model_checkpoint_illium,
+                                    args.model_checkpoint_sacrum, range_split=range_split, folds=folds, f=f, train=True,
+                                    use_t1_input=not args.omit_t1_input_i, use_t2_input=not args.omit_t2_input_i,
+                                    apply_weighting=not args.omit_weighting_i, seed=args.seed, mode=JOINT)
+            train_di = SPARCCDataset(args.data_dir, args.si_joint_model, args.model_checkpoint_illium,
+                                     args.model_checkpoint_sacrum, range_split=range_split, folds=folds, f=f, train=True,
+                                     use_t1_input=not args.omit_t1_input_di, use_t2_input=not args.omit_t2_input_di,
+                                     apply_weighting=not args.omit_weighting_di, seed=args.seed, mode=JOINT)
+            val_i = SPARCCDataset(args.data_dir, args.si_joint_model, args.model_checkpoint_illium,
+                                  args.model_checkpoint_sacrum, range_split=range_split, folds=folds, f=f, train=False,
+                                  use_t1_input=not args.omit_t1_input_i, use_t2_input=not args.omit_t2_input_i,
+                                  apply_weighting=not args.omit_weighting_i, seed=args.seed, mode=JOINT)
+            val_di = SPARCCDataset(args.data_dir, args.si_joint_model, args.model_checkpoint_illium,
+                                   args.model_checkpoint_sacrum, range_split=range_split, folds=folds, f=f, train=False,
+                                   use_t1_input=not args.omit_t1_input_di, use_t2_input=not args.omit_t2_input_di,
+                                   apply_weighting=not args.omit_weighting_di, seed=args.seed, mode=JOINT)
+            m, mw, a = _process_fold(args, (train_i, train_di), (val_i, val_di), f=f, w_i=val_i.score_weights[0],
+                                     w_di=val_di.score_weights[2])
             maes[f], maews[f], accs[f] = np.min(m), np.min(mw), np.max(a)
 
         print_frm('Final evaluation report:')
@@ -273,21 +284,48 @@ if __name__ == '__main__':
         print_frm('Processing fold %d' % (f+1))
         print_frm('')
         print_frm('Loading data')
-        train = SPARCCDataset(args.data_dir, args.si_joint_model, args.model_checkpoint_illium,
-                              args.model_checkpoint_sacrum, range_split=range_split, folds=folds, f=f, train=True,
-                              seed=args.seed, mode=JOINT, preprocess_transform=transform)
-        val = SPARCCDataset(args.data_dir, args.si_joint_model, args.model_checkpoint_illium,
-                            args.model_checkpoint_sacrum, range_split=range_split, folds=folds, f=f, train=False,
-                            seed=args.seed, mode=JOINT)
-        maes, maews, accs = _process_fold(args, val, f, w_i=val.score_weights[0], w_ii=val.score_weights[2])
+        train_i = SPARCCDataset(args.data_dir, args.si_joint_model, args.model_checkpoint_illium,
+                                args.model_checkpoint_sacrum, range_split=range_split, folds=folds, f=f, train=True,
+                                use_t1_input=not args.omit_t1_input_i, use_t2_input=not args.omit_t2_input_i,
+                                apply_weighting=not args.omit_weighting_i, seed=args.seed, mode=JOINT)
+        train_di = SPARCCDataset(args.data_dir, args.si_joint_model, args.model_checkpoint_illium,
+                                 args.model_checkpoint_sacrum, range_split=range_split, folds=folds, f=f, train=True,
+                                 use_t1_input=not args.omit_t1_input_di, use_t2_input=not args.omit_t2_input_di,
+                                 apply_weighting=not args.omit_weighting_di, seed=args.seed, mode=JOINT)
+        val_i = SPARCCDataset(args.data_dir, args.si_joint_model, args.model_checkpoint_illium,
+                              args.model_checkpoint_sacrum, range_split=range_split, folds=folds, f=f, train=False,
+                              use_t1_input=not args.omit_t1_input_i, use_t2_input=not args.omit_t2_input_i,
+                              apply_weighting=not args.omit_weighting_i, seed=args.seed, mode=JOINT)
+        val_di = SPARCCDataset(args.data_dir, args.si_joint_model, args.model_checkpoint_illium,
+                               args.model_checkpoint_sacrum, range_split=range_split, folds=folds, f=f, train=False,
+                               use_t1_input=not args.omit_t1_input_di, use_t2_input=not args.omit_t2_input_di,
+                               apply_weighting=not args.omit_weighting_di, seed=args.seed, mode=JOINT)
+        maes, maews, accs = _process_fold(args, (train_i, train_di), (val_i, val_di), f=f, w_i=val_i.score_weights[0],
+                                          w_di=val_di.score_weights[2])
     else:  # process a specific train test split
         split = args.train_val_test_split
         print_frm('Loading data')
+
+        train_i = SPARCCDataset(args.data_dir, args.si_joint_model, args.model_checkpoint_illium,
+                                args.model_checkpoint_sacrum, range_split=(0, split[1]), folds=folds, f=f, train=True,
+                                use_t1_input=not args.omit_t1_input_i, use_t2_input=not args.omit_t2_input_i,
+                                apply_weighting=not args.omit_weighting_i, seed=args.seed, mode=JOINT)
+        train_di = SPARCCDataset(args.data_dir, args.si_joint_model, args.model_checkpoint_illium,
+                                 args.model_checkpoint_sacrum, range_split=(0, split[1]), folds=folds, f=f, train=True,
+                                 use_t1_input=not args.omit_t1_input_di, use_t2_input=not args.omit_t2_input_di,
+                                 apply_weighting=not args.omit_weighting_di, seed=args.seed, mode=JOINT)
+        test_i = SPARCCDataset(args.data_dir, args.si_joint_model, args.model_checkpoint_illium,
+                               args.model_checkpoint_sacrum, range_split=(split[1], 1), folds=folds, f=f, train=False,
+                               use_t1_input=not args.omit_t1_input_i, use_t2_input=not args.omit_t2_input_i,
+                               apply_weighting=not args.omit_weighting_i, seed=args.seed, mode=JOINT)
+        test_di = SPARCCDataset(args.data_dir, args.si_joint_model, args.model_checkpoint_illium,
+                                args.model_checkpoint_sacrum, range_split=(split[1], 1), folds=folds, f=f, train=False,
+                                use_t1_input=not args.omit_t1_input_di, use_t2_input=not args.omit_t2_input_di,
+                                apply_weighting=not args.omit_weighting_di, seed=args.seed, mode=JOINT)
         train = SPARCCDataset(args.data_dir, args.si_joint_model, args.model_checkpoint_illium,
                               args.model_checkpoint_sacrum, range_split=(0, split[1]), seed=args.seed, mode=JOINT,
                               preprocess_transform=transform)
-        val = SPARCCDataset(args.data_dir, args.si_joint_model, args.model_checkpoint_illium,
-                            args.model_checkpoint_sacrum, range_split=(split[0], split[1]), seed=args.seed, mode=JOINT)
         test = SPARCCDataset(args.data_dir, args.si_joint_model, args.model_checkpoint_illium,
                              args.model_checkpoint_sacrum, range_split=(split[1], 1), seed=args.seed, mode=JOINT)
-        maes, emds, accs = _process_fold(args, test, w_i=test.score_weights[0], w_ii=test.score_weights[2])
+        maes, emds, accs = _process_fold(args, (train_i, train_di), (test_i, test_di), w_i=test_i.score_weights[0],
+                                         w_di=test_di.score_weights[2])
