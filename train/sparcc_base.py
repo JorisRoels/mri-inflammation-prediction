@@ -174,7 +174,8 @@ def validate_sparcc_scores(s_pred, s_true, split=(2, 6, 11)):
                 mask = (s_true >= split[j])
             else:
                 mask = ((s_true >= split[j]) * (s_true < split[j + 1]))
-            maews[i, j] = mae(s_true[mask], s_pred[mask, i])
+            if mask.sum() == 0:
+                maews[i, j] = mae(s_true[mask], s_pred[mask, i])
         accs[i] = accuracy_score(s_true_c, s_pred_c[:, i])
 
-    return maes, maews, accs
+    return maes, maews.mean(axis=1), accs
