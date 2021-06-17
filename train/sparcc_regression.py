@@ -147,7 +147,7 @@ def _process_fold(args, train, val, f=None, w_i=None, w_di=None):
     """
     print_frm('Predicting SPARCC regression scores on validation set')
     s_true = val[0].sparcc
-    s_pred = _predict_sparcc_regression_module(net_s, f, args)
+    s_pred = _predict_sparcc_regression_module(net_s, f_val, args)
 
     """
         Evaluate SPARCC scores
