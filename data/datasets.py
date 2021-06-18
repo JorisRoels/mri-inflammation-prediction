@@ -638,7 +638,7 @@ class SPARCCDataset(data.Dataset):
         weights = np.zeros((n, N_SLICES, N_SIDES, N_QUARTILES, p, p))
 
         # extract quartiles and weight maps
-        for i in range(n):
+        for i in tqdm(range(n), desc='Extracting quartiles and weights'):
             for j in range(N_SLICES):
                 for k in range(N_SIDES):
                     q, w = self._synced_extraction(t1_slices[i, j], t2_slices[i, j], si_joints[i, j, k], illium[i, j],
