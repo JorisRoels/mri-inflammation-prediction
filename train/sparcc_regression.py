@@ -259,11 +259,13 @@ if __name__ == '__main__':
             train_i = SPARCCDataset(args.data_dir, args.si_joint_model, args.model_checkpoint_illium,
                                     args.model_checkpoint_sacrum, range_split=range_split, folds=folds, f=f, train=True,
                                     use_t1_input=not args.omit_t1_input_i, use_t2_input=not args.omit_t2_input_i,
-                                    apply_weighting=not args.omit_weighting_i, seed=args.seed, mode=JOINT)
+                                    apply_weighting=not args.omit_weighting_i, seed=args.seed, mode=JOINT,
+                                    preprocess_transform=transform)
             train_di = SPARCCDataset(args.data_dir, args.si_joint_model, args.model_checkpoint_illium,
                                      args.model_checkpoint_sacrum, range_split=range_split, folds=folds, f=f, train=True,
                                      use_t1_input=not args.omit_t1_input_di, use_t2_input=not args.omit_t2_input_di,
-                                     apply_weighting=not args.omit_weighting_di, seed=args.seed, mode=JOINT)
+                                     apply_weighting=not args.omit_weighting_di, seed=args.seed, mode=JOINT,
+                                     preprocess_transform=transform)
             val_i = SPARCCDataset(args.data_dir, args.si_joint_model, args.model_checkpoint_illium,
                                   args.model_checkpoint_sacrum, range_split=range_split, folds=folds, f=f, train=False,
                                   use_t1_input=not args.omit_t1_input_i, use_t2_input=not args.omit_t2_input_i,
