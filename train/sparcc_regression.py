@@ -249,7 +249,7 @@ if __name__ == '__main__':
     transform = Compose([RandomDeformation()])
     # transform = None
     if args.fold is None and args.train_val_test_split is None:  # cross validation
-        range_split = (0, 0.1)
+        range_split = (0, 1)
         maes, maews, accs = np.zeros((folds)), np.zeros((folds)), np.zeros((folds))
         for f in range(folds):
             print_frm('')
