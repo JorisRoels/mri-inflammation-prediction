@@ -246,8 +246,8 @@ if __name__ == '__main__':
         If cross validation, loop over all folds, otherwise perform a single run of a specific fold or train/test split
     """
     folds = get_n_folds(args.checkpoint_i)
-    transform = Compose([RandomDeformation()])
-    # transform = None
+    # transform = Compose([RandomDeformation()])
+    transform = None
     if args.fold is None and args.train_val_test_split is None:  # cross validation
         range_split = (0, 1)
         maes, maews, accs = np.zeros((folds)), np.zeros((folds)), np.zeros((folds))
