@@ -1,3 +1,4 @@
+import numpy as np
 import torch
 import torch.utils.data as data
 import os
@@ -15,7 +16,7 @@ from effdet import create_model
 from timm.models.layers import set_layer_config
 
 from util.constants import *
-from util.tools import load, delinearize_index
+from util.tools import load, delinearize_index, rotate
 from train.sparcc_base import reg2class
 
 
@@ -195,12 +196,6 @@ class SPARCCDataset(data.Dataset):
         self.t2_slices = self._extract_slices(self.t2_data, self.slicenumbers[0],
                                               target_size=self.t1_slices[0].shape[1:])
 
-        # augmentation on slice level if necessary
-        if self.preprocess_transform is not None:
-            print_frm('    Augmenting slices...')
-            self.scores, self.slicenumbers, self.t1_slices, self.t2_slices = \
-                self._augment_slices(self.scores, self.slicenumbers, self.t1_slices, self.t2_slices)
-
         # pre-compute SI joint locations and illium/sacrum segmentations
         t1_slices_clahe = self._compute_clahe(self.t1_slices, clip_limit=T1_CLIPLIMIT)
         print_frm('    Computing SI joint locations')
@@ -209,6 +204,13 @@ class SPARCCDataset(data.Dataset):
         self.illium = self._compute_segmentation(t1_slices_clahe, self.illum_model)
         print_frm('    Computing sacrum segmentation')
         self.sacrum = self._compute_segmentation(t1_slices_clahe, self.sacrum_model)
+
+        # augmentation on slice level if necessary
+        if self.preprocess_transform is not None:
+            print_frm('    Augmenting slices...')
+            self.scores, self.slicenumbers, self.t1_slices, self.t2_slices, self.si_joints, self.illium, self.sacrum = \
+                self._augment_slices(self.scores, self.slicenumbers, self.t1_slices, self.t2_slices, self.si_joints,
+                                     self.illium, self.sacrum)
 
         # extract quartiles and corresponding weight maps
         print_frm('    Extracting quartiles and weights')
@@ -287,38 +289,52 @@ class SPARCCDataset(data.Dataset):
         else:
             return self.quartiles.shape[0]
 
-    def _augment_slices(self, scores, slicenumbers, t1_data, t2_data):
+    def _augment_slices(self, scores, slicenumbers, t1_data, t2_data, si_joints, illium, sacrum):
 
         n = len(t1_data)
         transform = self.preprocess_transform
         ds1 = []
         ds2 = []
+        dsi = []
+        dss = []
+        dssi = []
         for i in tqdm(range(n), desc='Augmenting slices'):
 
             # get the data
             x_t1 = t1_data[i]
             x_t2 = t2_data[i]
+            x_i = (illium[i] * (2**16-1)).astype('uint16')
+            x_s = (sacrum[i] * (2**16-1)).astype('uint16')
             sn1, sn2 = slicenumbers[0][i], slicenumbers[1][i]
             score = tuple([s[i] for s in scores])
+            si_joint = si_joints[i]
 
             # reshape to appropriate size
             n_slices, sz_orig, _ = x_t2.shape
-            x = np.concatenate((x_t1, x_t2), axis=0).astype(float)
+            x = np.concatenate((x_t1, x_t2, x_i, x_s), axis=0).astype(float)
 
             # augment sample
             data_t1 = []
             data_t2 = []
+            data_i = []
+            data_s = []
+            data_si = []
             for j in range(REPS):
 
                 # score invariant augmentation
                 x_ = transform(x)
-                x_t1_, x_t2_ = x_[:n_slices], x[n_slices:]
+                x_t1_, x_t2_, x_i_, x_s_ = np.split(x_, (x_t1.shape[0], x_t1.shape[0]+x_t2.shape[0], x_t1.shape[0]+x_t2.shape[0]+x_i.shape[0]))
 
                 score_ = score
+                si_joint_ = si_joint
+
+                # apply flips
                 if np.random.rand() < 0.5:
-                    # apply flip
+                    # flip
                     x_t1_ = x_t1_[:, :, ::-1]
                     x_t2_ = x_t2_[:, :, ::-1]
+                    x_i_ = x_i_[:, :, ::-1]
+                    x_s_ = x_s_[:, :, ::-1]
 
                     # adjust scores (flip sides)
                     for k in range(len(score_)):
@@ -326,23 +342,59 @@ class SPARCCDataset(data.Dataset):
                         score_[k][:, 0] = score_[k][:, 1]
                         score_[k][:, 1] = s_tmp
 
+                    # adjust joint
+                    s_tmp = si_joint_[:, 0, :].copy()
+                    si_joint_[:, 0, :] = si_joint_[:, 1, :]
+                    si_joint_[:, 1, :] = s_tmp
+
+                # apply rotation
+                if np.random.rand() < 0.5:
+                    # rotate
+                    center = (x_t1_.shape[1] // 2, x_t1_.shape[2] // 2)
+                    angle = (2 * MAX_ANGLE * (np.random.rand() - 0.5))
+                    angle_r = angle / 180 * np.pi
+                    R = cv2.getRotationMatrix2D(center, angle, 1)
+                    for k in range(n_slices):
+                        x_t1_[k] = cv2.warpAffine(x_t1_[k], R, x_t1_.shape[1:])
+                        x_t2_[k] = cv2.warpAffine(x_t2_[k], R, x_t2_.shape[1:])
+                        x_i_[k] = cv2.warpAffine(x_i_[k], R, x_i_.shape[1:])
+                        x_s_[k] = cv2.warpAffine(x_s_[k], R, x_s_.shape[1:])
+
+                    # scores don't need adjustment
+
+                    # adjust joint
+                    for k in range(si_joint_.shape[0]):
+                        si_joint_[k, 0, :2] = rotate(center, si_joint_[k, 0, :2], -angle_r)
+                        si_joint_[k, 0, 2:] = rotate(center, si_joint_[k, 0, 2:], -angle_r)
+                        si_joint_[k, 1, :2] = rotate(center, si_joint_[k, 1, :2], -angle_r)
+                        si_joint_[k, 1, 2:] = rotate(center, si_joint_[k, 1, 2:], -angle_r)
+
                 # extend data
                 data_t1.append(np.maximum(0, x_t1_).astype('uint16'))
                 data_t2.append(np.maximum(0, x_t2_).astype('uint16'))
+                data_i.append(np.minimum(1, np.maximum(0, x_i_ / (2**16-1))))
+                data_s.append(np.minimum(1, np.maximum(0, x_s_ / (2**16-1))))
                 for k in range(len(scores)):
                     scores[k].append(score_[k])
                 slicenumbers[0].append(sn1)
                 slicenumbers[1].append(sn2)
+                data_si.append(si_joint_)
 
             # append data
             ds1.append(np.asarray(data_t1, dtype='uint16'))
             ds2.append(np.asarray(data_t2, dtype='uint16'))
+            dsi.append(np.asarray(data_i))
+            dss.append(np.asarray(data_s))
+            dssi.append(np.asarray(data_si))
 
         # concatenate data
         t1_data = np.concatenate([t1_data, *ds1], axis=0)
         t2_data = np.concatenate([t2_data, *ds2], axis=0)
+        illium = np.concatenate([illium, *dsi], axis=0)
+        sacrum = np.concatenate([sacrum, *dss], axis=0)
+        si_joints = np.concatenate([si_joints, *dssi], axis=0)
 
-        return scores, slicenumbers, t1_data, t2_data
+        return scores, slicenumbers, t1_data, t2_data, si_joints, illium, sacrum
 
     def _shuffle_data(self):
         np.random.seed(self.seed)
