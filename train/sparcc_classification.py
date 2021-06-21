@@ -9,6 +9,7 @@ from neuralnets.util.io import print_frm
 from neuralnets.util.tools import set_seed
 from neuralnets.util.augmentation import *
 from sklearn.decomposition import PCA
+from pytorch_lightning.callbacks import ModelCheckpoint
 
 from data.datasets import SPARCCDataset, SPARCCClassificationDataset
 from models.sparcc_cnn import Inflammation_CNN, DeepInflammation_CNN, SPARCC_MLP_Classification
@@ -40,10 +41,11 @@ def _train_sparcc_classification_module(f_train, f_val, sparcc_train, sparcc_val
     train_loader = DataLoader(train, batch_size=args.train_batch_size, num_workers=args.num_workers, pin_memory=True,
                               shuffle=True)
     val_loader = DataLoader(val, batch_size=args.test_batch_size, num_workers=args.num_workers, pin_memory=True)
+    checkpoint_callback = ModelCheckpoint(save_top_k=5, verbose=True, monitor='val/maew', mode='min')
     trainer = pl.Trainer(max_epochs=args.epochs, gpus=args.gpus, accelerator=args.accelerator,
                          default_root_dir=args.log_dir, flush_logs_every_n_steps=args.log_freq,
                          log_every_n_steps=args.log_freq, progress_bar_refresh_rate=args.log_refresh_rate,
-                         num_sanity_val_steps=0)
+                         num_sanity_val_steps=0, callbacks=[checkpoint_callback], deterministic=True)
     trainer.fit(net, train_loader, val_loader)
     trainer.test(net, val_loader)
 
