@@ -41,7 +41,7 @@ def _train_sparcc_classification_module(f_train, f_val, sparcc_train, sparcc_val
     train_loader = DataLoader(train, batch_size=args.train_batch_size, num_workers=args.num_workers, pin_memory=True,
                               shuffle=True)
     val_loader = DataLoader(val, batch_size=args.test_batch_size, num_workers=args.num_workers, pin_memory=True)
-    checkpoint_callback = ModelCheckpoint(save_top_k=5, verbose=True, monitor='val/maew', mode='min')
+    checkpoint_callback = ModelCheckpoint(save_top_k=5, verbose=True, monitor='val/ba', mode='max')
     trainer = pl.Trainer(max_epochs=args.epochs, gpus=args.gpus, accelerator=args.accelerator,
                          default_root_dir=args.log_dir, flush_logs_every_n_steps=args.log_freq,
                          log_every_n_steps=args.log_freq, progress_bar_refresh_rate=args.log_refresh_rate,
