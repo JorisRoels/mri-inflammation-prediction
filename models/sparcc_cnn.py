@@ -229,7 +229,7 @@ class SPARCC_MLP_Classification(SPARCC_Base):
         loss = self.loss_ce(y_s_pred, y_s)
         y_s_pred = torch.argmax(F.softmax(y_s_pred, dim=1), dim=1).detach().cpu().numpy()
         self.y_true[phase].append(y_so.cpu().numpy())
-        self.y_pred[phase].append(class2reg(y_s_pred))
+        self.y_pred[phase].append(class2reg(y_s_pred) / 72)
         self.running_loss[phase] += loss.detach().cpu().numpy()
         self.running_count[phase] += 1
 
