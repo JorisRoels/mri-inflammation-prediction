@@ -10,9 +10,8 @@ from neuralnets.util.io import mkdir
 from sklearn.metrics import roc_auc_score, accuracy_score, balanced_accuracy_score
 
 from util.constants import *
-from util.losses import SPARCCSimilarityLoss
 from util.tools import scores, save, mae
-from train.sparcc_base import reg2class
+from train.sparcc_base import reg2class, class2reg
 
 
 class SPARCC_Prediction_Module(nn.Module):
@@ -218,7 +217,7 @@ class SPARCC_MLP_Classification(SPARCC_Base):
     def base_step(self, batch, batch_idx, phase='train'):
 
         # transfer to suitable device and get labels
-        f_i, f_ii, y_s = batch
+        f_i, f_ii, y_s, y_so = batch
         f_i = f_i.float()
         f_ii = f_ii.float()
         y_s = y_s.long()
@@ -228,10 +227,9 @@ class SPARCC_MLP_Classification(SPARCC_Base):
 
         # compute loss and log output
         loss = self.loss_ce(y_s_pred, y_s)
-        y_s = y_s.cpu().numpy()
         y_s_pred = torch.argmax(F.softmax(y_s_pred, dim=1), dim=1).detach().cpu().numpy()
-        self.y_true[phase].append(y_s)
-        self.y_pred[phase].append(y_s_pred)
+        self.y_true[phase].append(y_so.cpu().numpy())
+        self.y_pred[phase].append(class2reg(y_s_pred))
         self.running_loss[phase] += loss.detach().cpu().numpy()
         self.running_count[phase] += 1
 
@@ -240,8 +238,8 @@ class SPARCC_MLP_Classification(SPARCC_Base):
     def _log_prediction_metrics(self, y_true, y_pred, prefix='', suffix=''):
 
         # flatten everything
-        y_pred = y_pred.flatten()
-        y_true = y_true.flatten()
+        y_pred = reg2class(y_pred).flatten()
+        y_true = reg2class(y_true*72).flatten()
 
         # compute scores
         acc = accuracy_score(y_true, y_pred)

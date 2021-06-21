@@ -107,11 +107,15 @@ class SPARCCClassificationDataset(SPARCCBaseDataset):
 
         # discretize to categories if necessary
         if categories is not None:
+            self.y_sparcc = np.copy(self.y)
             self.y = reg2class(self.y * 72, split=categories)
 
             # prep data for ordinal classification
             if k_ordinal is not None:
                 self.y = self.y > k_ordinal
+
+    def __getitem__(self, i):
+        return self.f_i[i], self.f_ii[i], self.y[i], self.y_sparcc[i]
 
 
 class SPARCCDataset(data.Dataset):
