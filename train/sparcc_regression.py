@@ -48,7 +48,8 @@ def _train_sparcc_regression_module(f_train, f_val, sparcc_train, sparcc_val, ar
         Build the SPARCC regression model
     """
     print_frm('Building the MLP network')
-    net = SPARCC_MLP_Regression(lr=args.lr, f_dim=args.f_red, f_hidden=args.f_hidden)
+    f_dim = train.f_dim if args.f_red is None else args.f_red
+    net = SPARCC_MLP_Regression(lr=args.lr, f_dim=f_dim, f_hidden=args.f_hidden)
 
     """
         Training regression model
@@ -249,7 +250,7 @@ if __name__ == '__main__':
     # transform = Compose([RandomDeformation()])
     transform = None
     if args.fold is None and args.train_val_test_split is None:  # cross validation
-        range_split = (0, 1)
+        range_split = (0, 0.1)
         maes, maews, accs = np.zeros((folds)), np.zeros((folds)), np.zeros((folds))
         for f in range(folds):
             print_frm('')
