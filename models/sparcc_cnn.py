@@ -250,6 +250,53 @@ class SPARCC_MLP_Classification(SPARCC_Base):
         self.log(prefix + 'ba' + suffix, ba)
 
 
+class SPARCC_MLP_OrdinalClassification(SPARCC_Base):
+
+    def __init__(self, f_dim=512, f_hidden=128, lr=1e-3, weights=None, n_classes=2):
+        super().__init__(f_dim=f_dim, f_hidden=f_hidden, lr=lr)
+
+        self.model = SPARCC_Prediction_Module(f_dim=f_dim, f_hidden=f_hidden, n_classes=n_classes)
+
+        # define loss function
+        self.weights = None if weights is None else torch.Tensor(weights)
+        self.loss_ce = nn.CrossEntropyLoss(weight=self.weights)
+
+    def base_step(self, batch, batch_idx, phase='train'):
+
+        # transfer to suitable device and get labels
+        f_i, f_ii, y, _ = batch
+        f_i = f_i.float()
+        f_ii = f_ii.float()
+        y = y.long()
+
+        # forward prop
+        y_pred = self(f_i, f_ii)
+
+        # compute loss and log output
+        loss = self.loss_ce(y_pred, y)
+        y_pred = torch.argmax(F.softmax(y_pred, dim=1), dim=1).detach().cpu().numpy()
+        self.y_true[phase].append(y.cpu().numpy())
+        self.y_pred[phase].append(y_pred)
+        self.running_loss[phase] += loss.detach().cpu().numpy()
+        self.running_count[phase] += 1
+
+        return loss
+
+    def _log_prediction_metrics(self, y_true, y_pred, prefix='', suffix=''):
+
+        # flatten everything
+        y_pred = y_pred.flatten()
+        y_true = y_true.flatten()
+
+        # compute scores
+        acc = accuracy_score(y_true, y_pred)
+        ba = balanced_accuracy_score(y_true, y_pred)
+
+        # log scores
+        self.log(prefix + 'acc' + suffix, acc)
+        self.log(prefix + 'ba' + suffix, ba)
+
+
 class Inflammation_Module_Base(nn.Module):
     """
     Base module for inflammation prediction
