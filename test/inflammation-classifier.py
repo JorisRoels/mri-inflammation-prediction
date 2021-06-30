@@ -2,8 +2,6 @@
 This script illustrates training of an inflammation classifier for patches along SI joints
 '''
 import argparse
-import os
-import shutil
 import pytorch_lightning as pl
 
 from torch.utils.data import DataLoader
@@ -51,6 +49,7 @@ if __name__ == '__main__':
     parser.add_argument("--repetitions", help="Number of repetitions", type=int, default=1)
     parser.add_argument("--folds", help="Number of folds (overrides repetitions parameter if provided)", type=int,
                         default=None)
+    parser.add_argument("--filter-domain", help="Select a specific domain to filter out", type=str, default=None)
 
     # network parameters
     parser.add_argument("--train_val_test_split", help="Train/validation/test split", type=str, default=None)
@@ -117,21 +116,29 @@ if __name__ == '__main__':
             Load the data
         """
         print_frm('Loading data')
-        val = SPARCCDataset(args.data_dir, args.si_joint_model, args.model_checkpoint_illium,
-                            args.model_checkpoint_sacrum, range_split=range_split[1], folds=args.folds, f=i,
-                            train=False, seed=args.seed, mode=INFLAMMATION_MODULE, use_t1_input=not args.omit_t1_input,
-                            use_t2_input=not args.omit_t2_input, apply_weighting=not args.omit_weighting)
+        if range_split[1][1] > 0:
+            val = SPARCCDataset(args.data_dir, args.si_joint_model, args.model_checkpoint_illium,
+                                args.model_checkpoint_sacrum, range_split=range_split[1], folds=args.folds, f=i,
+                                train=False, seed=args.seed, mode=INFLAMMATION_MODULE, use_t1_input=not args.omit_t1_input,
+                                use_t2_input=not args.omit_t2_input, apply_weighting=not args.omit_weighting,
+                                filter_domain=args.filter_domain)
+        else:
+            val = None
         if args.folds is None:
             test = SPARCCDataset(args.data_dir, args.si_joint_model, args.model_checkpoint_illium,
                                  args.model_checkpoint_sacrum, range_split=range_split[2], seed=args.seed,
                                  mode=INFLAMMATION_MODULE, use_t1_input=not args.omit_t1_input,
-                                 use_t2_input=not args.omit_t2_input, apply_weighting=not args.omit_weighting)
+                                 use_t2_input=not args.omit_t2_input, apply_weighting=not args.omit_weighting,
+                                 filter_domain=args.filter_domain)
 
         """
             Build the network
         """
         print_frm('Building the network')
-        weights = val.score_weights[0]
+        if val is not None:
+            weights = val.score_weights[0]
+        else:
+            weights = test.score_weights[0]
         net = Inflammation_CNN(backbone=args.backbone, lr=args.lr, use_t1_input=not args.omit_t1_input,
                                use_t2_input=not args.omit_t2_input, weights=weights)
         ## load networks checkpoint ##

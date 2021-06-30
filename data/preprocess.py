@@ -546,6 +546,7 @@ if __name__ == '__main__':
 
     all_scores = []
     all_slicenumbers = []
+    all_domains = []
     all_t1_volumes = []
     all_t2_volumes = []
 
@@ -572,6 +573,9 @@ if __name__ == '__main__':
         (t1_volumes, t2_volumes), (df_scores, scores, slicenumbers) = filter_relevant(ds_path, df_scores, scores,
                                                                                       slicenumbers)
 
+        # setup domains
+        domains = [ds for i in range(len(t1_volumes))]
+
         # print stats after filtering
         print_frm("Score stats after filtering")
         print_stats(df_scores.reset_index(), scores)
@@ -581,6 +585,7 @@ if __name__ == '__main__':
             # keep track of data
             all_scores.append(scores)
             all_slicenumbers.append(slicenumbers)
+            all_domains.append(domains)
             all_t1_volumes.append(t1_volumes)
             all_t2_volumes.append(t2_volumes)
 
@@ -596,6 +601,7 @@ if __name__ == '__main__':
             print_frm("Saving scores")
             save(scores, os.path.join(ds_path_out, SCORES_PP_FILE))
             save(slicenumbers, os.path.join(ds_path_out, SLICENUMBERS_PP_FILE))
+            save(domains, os.path.join(ds_path_out, DOMAINS_PP_FILE))
 
     if args.merge:
 
@@ -603,11 +609,13 @@ if __name__ == '__main__':
         print_frm("Merging")
         merged_scores = all_scores[0]
         merged_slicenumbers = all_slicenumbers[0]
+        merged_domains = all_domains[0]
         merged_t1_volumes = all_t1_volumes[0]
         merged_t2_volumes = all_t2_volumes[0]
         for k in range(1, len(all_scores)):
             merged_scores = tuple([merged_scores[i]+all_scores[k][i] for i in range(len(merged_scores))])
             merged_slicenumbers = tuple([merged_slicenumbers[i]+all_slicenumbers[k][i] for i in range(len(merged_slicenumbers))])
+            merged_domains = merged_domains + all_domains[k]
             merged_t1_volumes = merged_t1_volumes + all_t1_volumes[k]
             merged_t2_volumes = merged_t2_volumes + all_t2_volumes[k]
 
@@ -619,8 +627,9 @@ if __name__ == '__main__':
         save(merged_t2_volumes, os.path.join(ds_path_out, T2_PP_FILE))
 
         # save scores
-        print_frm("Saving scores")
+        print_frm("Saving scores and metadata")
         save(merged_scores, os.path.join(ds_path_out, SCORES_PP_FILE))
         save(merged_slicenumbers, os.path.join(ds_path_out, SLICENUMBERS_PP_FILE))
+        save(merged_domains, os.path.join(ds_path_out, DOMAINS_PP_FILE))
 
     print_frm('Done!')

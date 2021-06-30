@@ -140,7 +140,7 @@ class SPARCCDataset(data.Dataset):
 
     def __init__(self, data_path, si_joint_model, illum_model, sacrum_model, range_split=(0, 1), folds=None, f=None,
                  train=True, transform=None, seed=0, mode=JOINT, preprocess_transform=None, use_t1_input=True,
-                 use_t2_input=True, apply_weighting=True):
+                 use_t2_input=True, apply_weighting=True, filter_domain=None):
         self.data_path = data_path
         self.si_joint_model = si_joint_model
         self.illum_model = illum_model
@@ -156,11 +156,13 @@ class SPARCCDataset(data.Dataset):
         self.use_t1_input = use_t1_input
         self.use_t2_input = use_t2_input
         self.apply_weighting = apply_weighting
+        self.filter_domain = filter_domain
 
         # load all necessary files
         print_frm('    Loading pickled data')
         self.scores = load(os.path.join(data_path, SCORES_PP_FILE))
         self.slicenumbers = load(os.path.join(data_path, SLICENUMBERS_PP_FILE))
+        self.domains = load(os.path.join(data_path, DOMAINS_PP_FILE))
         self.t1_data = load(os.path.join(data_path, T1_PP_FILE))
         self.t2_data = load(os.path.join(data_path, T2_PP_FILE))
 
@@ -173,6 +175,7 @@ class SPARCCDataset(data.Dataset):
         stop = int(stop * len(self.t1_data))
         self.scores = tuple([scoreset[start:stop] for scoreset in self.scores])
         self.slicenumbers = (self.slicenumbers[0][start:stop], self.slicenumbers[1][start:stop])
+        self.domains = self.domains[start:stop]
         self.t1_data = self.t1_data[start:stop]
         self.t2_data = self.t2_data[start:stop]
 
@@ -191,8 +194,21 @@ class SPARCCDataset(data.Dataset):
             inds_split = list(kf.split(inds, y))[self.f][t]
             self.scores = tuple([[scoreset[i] for i in inds_split] for scoreset in self.scores])
             self.slicenumbers = tuple([[sn[i] for i in inds_split] for sn in self.slicenumbers])
+            self.domains = [self.domains[i] for i in inds_split]
             self.t1_data = [self.t1_data[i] for i in inds_split]
             self.t2_data = [self.t2_data[i] for i in inds_split]
+
+        # filter domain if required
+        if filter_domain is not None:
+            inds = []
+            for i in range(len(self.domains)):
+                if self.domains[i] == filter_domain:
+                    inds.append(i)
+            self.scores = tuple([[scoreset[i] for i in inds] for scoreset in self.scores])
+            self.slicenumbers = tuple([[sn[i] for i in inds] for sn in self.slicenumbers])
+            self.domains = [self.domains[i] for i in inds]
+            self.t1_data = [self.t1_data[i] for i in inds]
+            self.t2_data = [self.t2_data[i] for i in inds]
 
         # extract slices
         print_frm('    Extracting slices')
@@ -406,6 +422,7 @@ class SPARCCDataset(data.Dataset):
         self.scores = tuple([[scoreset[i] for i in inds_shuffled] for scoreset in self.scores])
         self.slicenumbers = ([self.slicenumbers[0][i] for i in inds_shuffled],
                              [self.slicenumbers[1][i] for i in inds_shuffled])
+        self.domains = [self.domains[i] for i in inds_shuffled]
         self.t1_data = [self.t1_data[i] for i in inds_shuffled]
         self.t2_data = [self.t2_data[i] for i in inds_shuffled]
 
