@@ -212,9 +212,8 @@ class SPARCCDataset(data.Dataset):
 
         # extract slices
         print_frm('    Extracting slices')
-        self.t1_slices = self._extract_slices(self.t1_data, self.slicenumbers[1])
-        self.t2_slices = self._extract_slices(self.t2_data, self.slicenumbers[0],
-                                              target_size=self.t1_slices[0].shape[1:])
+        self.t1_slices = self._extract_slices(self.t1_data, self.slicenumbers[1], target_size=(512, 512))
+        self.t2_slices = self._extract_slices(self.t2_data, self.slicenumbers[0], target_size=(512, 512))
 
         # pre-compute SI joint locations and illium/sacrum segmentations
         t1_slices_clahe = self._compute_clahe(self.t1_slices, clip_limit=T1_CLIPLIMIT)
