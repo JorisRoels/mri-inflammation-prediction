@@ -14,6 +14,7 @@ MERGED_DIR = 'merged'
 
 # preprocessed data files
 SCORES_PP_FILE = 'scores.pickle'
+DOMAINS_PP_FILE = 'domains.pickle'
 SLICENUMBERS_PP_FILE = 'slicenumbers.pickle'
 T1_PP_FILE = 't1.pickle'
 T2_PP_FILE = 't2.pickle'
