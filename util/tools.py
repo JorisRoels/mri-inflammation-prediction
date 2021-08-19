@@ -50,6 +50,17 @@ def fpr_score(y_true, y_pred):
     return fp / n
 
 
+def npv_score(y_true, y_pred):
+
+    y_true = y_true.astype(int)
+    y_pred = y_pred.astype(int)
+
+    tn = np.sum((y_pred == 0) * (y_true == 0))
+    pn = np.sum(y_pred == 0)
+
+    return tn / pn
+
+
 def mae(s_true, s_pred, weighted=False, beta=10, gamma=10, delta=0.2, reduce=True):
     l1 = np.abs(s_pred - s_true)
     if weighted:
@@ -76,6 +87,7 @@ def scores(y_true, y_pred):
     rs = np.zeros(len(thresholds))
     ps = np.zeros(len(thresholds))
     fprs = np.zeros(len(thresholds))
+    npvs = np.zeros(len(thresholds))
     fs = np.zeros(len(thresholds))
     for i, t in enumerate(thresholds):
         y_pred_label = y_pred > t
@@ -84,13 +96,14 @@ def scores(y_true, y_pred):
         rs[i] = recall_score(y_true, y_pred_label)
         ps[i] = precision_score(y_true, y_pred_label)
         fprs[i] = fpr_score(y_true, y_pred_label)
+        npvs[i] = npv_score(y_true, y_pred_label)
         fs[i] = f1_score(y_true, y_pred_label)
 
     # maximize scores w.r.t. f1-score
     i = np.argmax(fs)
-    scores_opt = (acs[i], bas[i], rs[i], ps[i], fprs[i], fs[i])
+    scores_opt = (acs[i], bas[i], rs[i], ps[i], fprs[i], npvs[i], fs[i])
 
-    return acs, bas, rs, ps, fprs, fs, scores_opt
+    return acs, bas, rs, ps, fprs, npvs, fs, scores_opt
 
 
 def rotate(origin, point, angle):

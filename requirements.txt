@@ -1,5 +1,5 @@
-neuralnets
 torch>=1.4.0
+pytorch_lightning
 timm>=0.3.2
 torchvision
 numpy
@@ -9,3 +9,9 @@ pycocotools>=2.0.2
 omegaconf>=2.0
 pylibjpeg
 pylibjpeg-libjpeg
+opencv-python
+h5py
+tifffile
+scipy
+elasticdeform
+scikit-image

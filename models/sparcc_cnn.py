@@ -440,8 +440,8 @@ class Inflammation_Base(pl.LightningModule):
         y_true = y_true.flatten()
 
         # compute scores
-        acs, bas, rs, ps, fprs, fs, scores_opt = scores(y_true, y_pred)
-        a, ba, r, p, fpr, f = scores_opt
+        acs, bas, rs, ps, fprs, npvs, fs, scores_opt = scores(y_true, y_pred)
+        a, ba, r, p, fpr, npv, f = scores_opt
         if np.sum(y_true) > 0:
             auc = roc_auc_score(y_true, y_pred)
         else:
@@ -453,14 +453,15 @@ class Inflammation_Base(pl.LightningModule):
         self.log(prefix + 'recall' + suffix, r)
         self.log(prefix + 'precision' + suffix, p)
         self.log(prefix + 'fpr' + suffix, fpr)
+        self.log(prefix + 'npv' + suffix, npv)
         self.log(prefix + 'f1-score' + suffix, f)
         self.log(prefix + 'roc-auc' + suffix, auc)
 
         # save results
         log_dir = self.logger.log_dir
-        results = {'accuracy': acs, 'balanced-accuracy': bas, 'recall': rs, 'precision': ps, 'fpr': fprs,
+        results = {'accuracy': acs, 'balanced-accuracy': bas, 'recall': rs, 'precision': ps, 'fpr': fprs, 'npv': npvs,
                    'f1-score': fs, 'roc-auc': auc, 'scores-opt': {'accuracy': a, 'balanced-accuracy': ba, 'recall': r,
-                                                                  'precision': p, 'fpr': fpr, 'f1-score': f}}
+                                                                  'precision': p, 'fpr': fpr, 'npv': npv, 'f1-score': f}}
         mkdir(os.path.join(log_dir, os.path.dirname(prefix)))
         save(results, os.path.join(log_dir, prefix + str(self.global_step) + '.pickle'))
 
