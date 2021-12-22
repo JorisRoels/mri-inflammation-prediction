@@ -151,7 +151,7 @@ if __name__ == '__main__':
         """
         print_frm('Testing network')
         trainer = _test_module(net, val if args.folds is not None else test, args)
-        metrics.append([float(trainer.logged_metrics['test/' + m].cpu()) for m in METRICS])
+        metrics.append([float(trainer.logged_metrics['test/' + m]) for m in METRICS])
 
 
     """
