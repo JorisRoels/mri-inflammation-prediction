@@ -88,6 +88,7 @@ if __name__ == '__main__':
 
     # logging parameters
     parser.add_argument("--log_dir", help="Logging directory", type=str, default='logs')
+    parser.add_argument("--metric_file", help="Destination to save metrics", type=str, default=None)
     parser.add_argument("--log_freq", help="Frequency to log results", type=int, default=50)
     parser.add_argument("--log_refresh_rate", help="Refresh rate for logging", type=int, default=1)
     parser.add_argument("--seed", help="Seed for reproducibility", type=int, default=0)
@@ -169,8 +170,6 @@ if __name__ == '__main__':
 
             # average out predictions
             y_preds = np.mean(np.asarray(y_preds)[:, :, 1], axis=0)
-            # y_preds_votes = np.sum(np.stack(y_preds), axis=0)
-            # y_preds = (y_preds_votes > (n_folds / 2)).astype(int)
 
             # metrics
             acs, bas, rs, ps, fprs, npvs, fs, scores_opt = scores(y_true, y_preds)
@@ -200,3 +199,5 @@ if __name__ == '__main__':
     print_frm('=========================')
     for i, m in enumerate(METRICS):
         print_frm('    %s: %f' % (m, metrics_avg[i]))
+    if args.metric_file is not None:
+        np.save(args.metric_file, metrics_avg)
