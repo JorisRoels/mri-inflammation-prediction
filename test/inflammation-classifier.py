@@ -179,6 +179,8 @@ if __name__ == '__main__':
             else:
                 auc = 0.5
             metrics.append([a, ba, p, r, fpr, npv, f, auc, -1])
+            if args.metric_file is not None:
+                np.save(args.metric_file, np.stack((acs, bas, rs, ps, fprs, npvs, fs)))
         else:
             ckpt_i_file = get_checkpoint_location(args.checkpoint, f) if f is not None else args.checkpoint
             net.load_state_dict(torch.load(ckpt_i_file)['state_dict'])
@@ -199,5 +201,3 @@ if __name__ == '__main__':
     print_frm('=========================')
     for i, m in enumerate(METRICS):
         print_frm('    %s: %f' % (m, metrics_avg[i]))
-    if args.metric_file is not None:
-        np.save(args.metric_file, metrics_avg)
