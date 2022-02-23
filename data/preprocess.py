@@ -6,7 +6,7 @@ and converts them to a lossless compressed pickle format
 import numpy as np
 import pandas as pd
 import pydicom
-import os
+import os, shutil
 import argparse
 
 from tqdm import tqdm
@@ -16,12 +16,40 @@ from util.constants import *
 from util.tools import save, num2str
 
 
-def _is_t1(s, case):
-    return s in T1_OPTIONS[case]
+def _flatten_directory(d):
+    sdirs = os.listdir(d)
+    for sdir in sdirs:
+        if os.path.isdir(os.path.join(d, sdir)):
+            sdir = os.listdir(d)[0]
+            pdir = os.listdir(os.path.join(d, sdir))[0]
+            fs = os.listdir(os.path.join(d, sdir, pdir))
+            for f in fs:
+                fs_ = os.listdir(os.path.join(d, sdir, pdir, f))
+                for f_ in fs_:
+                    os.rename(os.path.join(d, sdir, pdir, f, f_), os.path.join(d, f_))
+            shutil.rmtree(os.path.join(d, sdir))
 
 
-def _is_t2(s, case):
-    return s in T2_OPTIONS[case]
+def _is_t1(s, case, match=None):
+    # for option in T1_OPTIONS[case]:
+    #     if option in s:
+    #         return True
+    # return False
+    if case == BEGIANT_VAL and match is not None:
+        return s == match
+    else:
+        return s in T1_OPTIONS[case]
+
+
+def _is_t2(s, case, match=None):
+    # for option in T1_OPTIONS[case]:
+    #     if option in s:
+    #         return True
+    # return False
+    if case == BEGIANT_VAL and match is not None:
+        return s == match
+    else:
+        return s in T2_OPTIONS[case]
 
 
 def _extract_ids(sort_ids):
@@ -70,14 +98,99 @@ def _load_scores_begiant(scores_path):
     # for each patient and study, compute the median scores across the different specialists
     df_groups = df.groupby([PATIENT_NUMBER, ACCESSION_NUMBER])
     df_scores = df_groups.median()
-    # medians over slicenumbers are incorrect, correct these
-    j = 0
-    for _, df_group in df_groups:
-        for type in [INFLAMMATORY, STRUCTURAL]:
-            for slice in SLICES:
-                col = type + '_' + SLICENUMBER + '_' + slice
-                df_scores.iloc[j][col] = df_group.loc[df_group[col] == df_group[col].median()][col].iloc[0]
-        j = j + 1
+    # df_scores = df_scores.dropna(how="any").copy()
+    # slicenumbers should be integers
+    for type in [INFLAMMATORY, STRUCTURAL]:
+        for slice in SLICES:
+            col = type + '_' + SLICENUMBER + '_' + slice
+            df_scores[col] = df_scores[col].astype(int)
+
+    # extract quartile scores
+    L1_scores = {INFLAMMATION: [],
+                 SCLEROSIS: [],
+                 EROSION: [],
+                 FAT: [],
+                 PARTANK: [],
+                 ANKYLOSIS: []}
+    slicenumbers_inflammation = []
+    slicenumbers_structural = []
+    for id, score in df_scores.iterrows():
+        si = np.zeros((len(SLICES)), dtype=int)
+        ss = np.zeros((len(SLICES)), dtype=int)
+        for dis_type in TYPES:
+            q_scores = np.zeros((len(SLICES), len(SIDES), len(QUARTILES)), dtype=bool)
+            for i, slice in enumerate(SLICES):
+                si[i] = getattr(score, INFLAMMATORY + '_' + SLICENUMBER + '_' + slice) - 1
+                ss[i] = getattr(score, STRUCTURAL + '_' + SLICENUMBER + '_' + slice) - 1
+                for j, side in enumerate(SIDES):
+                    for k, quartile in enumerate(QUARTILES):
+                        q_scores[i, j, k] = \
+                            getattr(score, dis_type + '_' + quartile + '_' + side + '_' + slice)
+            L1_scores[dis_type].append(q_scores)
+        slicenumbers_inflammation.append(si)
+        slicenumbers_structural.append(ss)
+
+    # extract side scores
+    inflammation_L21_scores = []
+    inflammation_L22_scores = []
+    for id, score in df_scores.iterrows():
+        s_scores_1 = np.zeros((len(SLICES), len(SIDES)), dtype=bool)
+        s_scores_2 = np.zeros((len(SLICES), len(SIDES)), dtype=bool)
+        for i, slice in enumerate(SLICES):
+            for j, side in enumerate(SIDES):
+                s_scores_1[i, j] = getattr(score, DEPTH + '_' + side + '_' + slice)
+                s_scores_1[i, j] = getattr(score, INTENSITY + '_' + side + '_' + slice)
+        inflammation_L21_scores.append(s_scores_1)
+        inflammation_L22_scores.append(s_scores_2)
+
+    return df_scores, \
+           (L1_scores[INFLAMMATION], inflammation_L21_scores, inflammation_L22_scores, L1_scores[SCLEROSIS], \
+            L1_scores[EROSION], L1_scores[FAT], L1_scores[PARTANK], L1_scores[ANKYLOSIS]), \
+           (slicenumbers_inflammation, slicenumbers_structural)
+
+
+def _load_scores_begiant_val(scores_path):
+    """
+    Loads the scores CSV file and processes them in a structured format
+
+    :param scores_path: path to the file
+    :return: df_scores, (inflammation_L1_scores, inflammation_L21_scores, inflammation_L22_scores,
+             sclerosis_L1_scores, erosion_L1_scores, fat_L1_scores, partankylosis_L1_scores,
+             ankylosis_L1_scores), (slicenumbers_inflammation, slicenumbers_structural)
+        df_scores: dataframe of the scores (median filtered over the different annotators)
+        lists of scores of the following structure:
+        - <x>_L1_scores: list of numpy arrays S (of shape [6, 2, 4]) such that S[i, j, k] is True if <x> is
+                         present in slice i, side j, quartile k.
+        - <x>_L21_scores: list of numpy arrays S (of shape [6, 2]) such that S[i, j] is True if deep <x> lesion
+                          is present in slice i, side j.
+        - <x>_L22_scores: list of numpy arrays S (of shape [6, 2]) such that S[i, j] is True if intense <x>
+                          lesion is present in slice i, side j.
+        lists of slicenumbers:
+        - slicenumbers_inflammation: list of slicenumbers that were selected for inflammation scoring
+        - slicenumbers_structural: list of slicenumbers that were selected for structural scoring
+
+    """
+    # load scores dataframe
+    df = pd.read_csv(scores_path, sep=',')
+
+    # sort w.r.t. patient numbers
+    df = df.sort_values(PATIENT_NUMBER)
+
+    # for each patient and study, compute the median scores across the different specialists
+    dt1 = df[[PATIENT_NUMBER, ACCESSION_NUMBER, DESCRIPTION_T1]]
+    dt1 = dt1.groupby([PATIENT_NUMBER, ACCESSION_NUMBER]).max()
+    dt2 = df[[PATIENT_NUMBER, ACCESSION_NUMBER, DESCRIPTION_T2]]
+    dt2 = dt2.groupby([PATIENT_NUMBER, ACCESSION_NUMBER]).max()
+    df = df.drop(columns=[DESCRIPTION_T1, DESCRIPTION_T2])
+    df_groups = df.groupby([PATIENT_NUMBER, ACCESSION_NUMBER])
+    df_scores = df_groups.median()
+    df_scores = pd.concat([df_scores, dt1, dt2], axis=1)
+    # df_scores = df_scores.dropna(how="any").copy()
+    # slicenumbers should be integers
+    for type in [INFLAMMATORY, STRUCTURAL]:
+        for slice in SLICES:
+            col = type + '_' + SLICENUMBER + '_' + slice
+            df_scores[col] = df_scores[col].astype(int)
 
     # extract quartile scores
     L1_scores = {INFLAMMATION: [],
@@ -319,10 +432,22 @@ def _filter_relevant_begiant(data_path, df_scores, scores, slicenumbers):
         # loop over all sequences and filter relevant ones
         pt_dir = 'PAT' + num2str(p_id, K=4)
         patient_path = os.path.join(data_path, pt_dir, 'MR', pt_dir + '_' + p_acn)
+        if not os.path.isdir(patient_path):
+            patient_path = os.path.join(data_path, pt_dir, 'MR', 'PAT' + '0' + str(p_id) + '_' + p_acn)
+            if not os.path.isdir(patient_path):
+                # print('Non existing directory: %s' % patient_path)
+                continue
+
         image_files = os.listdir(patient_path)
+        if os.path.isdir(os.path.join(patient_path, image_files[0])):
+            _flatten_directory(patient_path)
+            continue
+        x = []
         for image_file in image_files:
             # read the image
             image = pydicom.read_file(os.path.join(patient_path, image_file))
+            if image.SeriesDescription not in x:
+                x.append(image.SeriesDescription)
             if _is_t1(image.SeriesDescription, ds):
                 # print_frm('   Found T1 image: %s' % (image_file))
                 volumes_tmp[T1].append(image.pixel_array)
@@ -341,6 +466,111 @@ def _filter_relevant_begiant(data_path, df_scores, scores, slicenumbers):
             if len(volumes_tmp[id]) == 0:
                 # print_frm('    Discarding patient %d, study %s due to non-existing %s data' % (p_id, p_acn, id))
                 keep_sample = False
+                print(os.path.basename(patient_path))
+
+        # sort images w.r.t. instance numbers
+        if keep_sample:
+            for id in [T1, T2]:
+                n_images = len(volumes_tmp[id])
+                shape = volumes_tmp[id][0].shape
+                dtype = volumes_tmp[id][0].dtype
+                volume = np.zeros((n_images, *shape), dtype=dtype)
+                for n in range(n_images):
+                    volume[sort_ids[id][n]] = volumes_tmp[id][n]
+                filtered_volumes[id].append(volume)
+
+            # perform filtering, i.e. save record
+            filtered_df_scores = filtered_df_scores.append(p_rec)
+            for j in range(len(filtered_scores)):
+                filtered_scores[j].append(scores[j][i])
+            for j in range(len(filtered_slicenumbers)):
+                filtered_slicenumbers[j].append(slicenumbers[j][i])
+
+    return (filtered_volumes[T1], filtered_volumes[T2]), \
+           (filtered_df_scores, tuple(filtered_scores), tuple(filtered_slicenumbers))
+
+
+def _filter_relevant_begiant_val(data_path, df_scores, scores, slicenumbers):
+    """
+    Loads the data that corresponds to the selected score files and filters the relevant ones out
+
+    :param data_path: path the data that contain the patient directories
+    :param df_scores: scores data frame
+    :param scores: preloaded scores
+    :param slicenumbers: slicenumbers that were scored for each patient study
+    :return: Data that corresponds to the selected score files and corrected score files (if this was necessary)
+        (t1_images, t2_images), (df_scores, scores, slicenumbers)
+        - t1_images: list of T1 images that belong to the corresponding structural scores
+        - t2_images: list of T2 images that belong to the corresponding inflammation scores
+        - df_scores: filtered scores data frame (records may be removed due to absence of T1/T2 image)
+        - scores: filtered preloaded scores (records may be removed due to absence of T1/T2 image)
+        - slicenumbers: filtered slicenumbers (records may be removed due to absence of T1/T2 image)
+    """
+    ds = os.path.basename(data_path)
+    # loop over all scored samples
+    df_scores = df_scores.reset_index()
+    filtered_df_scores = pd.DataFrame(columns=df_scores.columns)
+    filtered_scores = [[] for j in range(len(scores))]
+    filtered_slicenumbers = [[] for j in range(len(slicenumbers))]
+    filtered_volumes = {T1: [], T2: []}
+    irows = list(df_scores.iterrows())
+    for k in tqdm(range(len(irows))):
+        i, p_rec = irows[k]
+        p_id = p_rec[PATIENT_NUMBER]
+        p_acn = str(p_rec[ACCESSION_NUMBER])
+
+        # initialize data list
+        volumes_tmp = {T1: [], T2: []}
+        sort_ids = {T1: [], T2: []}
+
+        # loop over all sequences and filter relevant ones
+        pt_dir = 'PAT' + num2str(p_id, K=4)
+        patient_path = os.path.join(data_path, pt_dir, 'MR', pt_dir + '_' + p_acn)
+        if not os.path.isdir(patient_path):
+            patient_path = os.path.join(data_path, pt_dir, 'MR', 'PAT' + '0' + str(p_id) + '_' + p_acn)
+            if not os.path.isdir(patient_path):
+                p_acn = str(int(p_acn) - 1)
+                patient_path = os.path.join(data_path, pt_dir, 'MR', 'PAT' + '0' + str(p_id) + '_' + p_acn)
+                if not os.path.isdir(patient_path):
+                    p_acn = str(int(p_acn) + 2)
+                    patient_path = os.path.join(data_path, pt_dir, 'MR', 'PAT' + '0' + str(p_id) + '_' + p_acn)
+                    if not os.path.isdir(patient_path):
+                        p_acn = str(int(p_acn) - 1)
+                        patient_path = os.path.join(pt_dir, 'MR', 'PAT' + '0' + str(p_id) + '_' + p_acn)
+                        # print_frm('Non existing directory: %s' % patient_path)
+                        continue
+
+        image_files = os.listdir(patient_path)
+        if os.path.isdir(os.path.join(patient_path, image_files[0])):
+            _flatten_directory(patient_path)
+            continue
+        x = []
+        for image_file in image_files:
+            # read the image
+            image = pydicom.read_file(os.path.join(patient_path, image_file))
+            if image.SeriesDescription not in x:
+                x.append(image.SeriesDescription)
+            if _is_t1(image.SeriesDescription, ds, match=p_rec[DESCRIPTION_T1]):
+                # print_frm('   Found T1 image: %s' % (image_file))
+                volumes_tmp[T1].append(image.pixel_array)
+                sort_ids[T1].append(image.InstanceNumber)
+            elif _is_t2(image.SeriesDescription, ds, match=p_rec[DESCRIPTION_T2]):
+                # print_frm('   Found T2 image: %s' % (image_file))
+                volumes_tmp[T2].append(image.pixel_array)
+                sort_ids[T2].append(image.InstanceNumber)
+
+        # extract indices from sorted ids
+        sort_ids = _extract_ids(sort_ids)
+
+        # check None values
+        keep_sample = True
+        for id in [T1, T2]:
+            if len(volumes_tmp[id]) == 0:
+                # print_frm('    Discarding patient %d, study %s due to non-existing %s data' % (p_id, p_acn, id))
+                keep_sample = False
+                patient_path = os.path.join(pt_dir, 'MR', 'PAT' + '0' + str(p_id) + '_' + p_acn)
+                # print_frm(f'Missing {id.upper()} sequence in {patient_path}')
+                print_frm(x)
 
         # sort images w.r.t. instance numbers
         if keep_sample:
@@ -533,6 +763,20 @@ def _filter_relevant_popas(data_path, df_scores, scores, slicenumbers):
            (filtered_df_scores, tuple(filtered_scores), tuple(filtered_slicenumbers))
 
 
+load_scores_fns = {BEGIANT: _load_scores_begiant,
+                   BEGIANT_VAL: _load_scores_begiant_val,
+                   POPAS: _load_scores_begiant,
+                   HEALTHY_CONTROLS: _load_scores_healthy}
+print_stats_fns = {BEGIANT: _print_stats_begiant,
+                   BEGIANT_VAL: _print_stats_begiant,
+                   POPAS: _print_stats_begiant,
+                   HEALTHY_CONTROLS: _print_stats_healthy}
+filter_relevant_fns = {BEGIANT: _filter_relevant_begiant,
+                       BEGIANT_VAL: _filter_relevant_begiant_val,
+                       POPAS: _filter_relevant_popas,
+                       HEALTHY_CONTROLS: _filter_relevant_healthy}
+
+
 if __name__ == '__main__':
 
     # parse all the arguments
@@ -554,10 +798,9 @@ if __name__ == '__main__':
     for i, ds in enumerate(args.datasets):
         ds_path = os.path.join(args.data_dir, ds)
         ds_path_out = ds_path + SUFFIX_FILTERED
-        load_scores = _load_scores_begiant if ds in [BEGIANT, POPAS] else _load_scores_healthy
-        print_stats = _print_stats_begiant if ds in [BEGIANT, POPAS] else _print_stats_healthy
-        filter_relevant = _filter_relevant_begiant if ds == BEGIANT else _filter_relevant_healthy \
-            if ds == HEALTHY_CONTROLS else _filter_relevant_popas
+        load_scores = load_scores_fns[ds]
+        print_stats = print_stats_fns[ds]
+        filter_relevant = filter_relevant_fns[ds]
         print_frm("Processing dataset %d/%d: %s" % (i+1, len(args.datasets), ds_path))
 
         # loading scores

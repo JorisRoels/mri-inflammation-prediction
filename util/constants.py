@@ -9,7 +9,7 @@ import torchvision.models as models
 # name of the CSV file containing the annotations
 SCORES_FILE = 'scores-corrected.csv'
 # suffix for the filtered data and merge directory name
-SUFFIX_FILTERED = '-filtered-new'
+SUFFIX_FILTERED = '-filtered'
 MERGED_DIR = 'merged'
 
 # preprocessed data files
@@ -21,6 +21,7 @@ T2_PP_FILE = 't2.pickle'
 
 # different datasets
 BEGIANT = 'BEGIANT'
+BEGIANT_VAL = 'BEGIANT_VAL'
 HEALTHY_CONTROLS = 'HEALTHY_CONTROLS'
 POPAS = 'POPAS'
 
@@ -45,6 +46,9 @@ INFLAMMATORY = 'Inflammatory'
 STRUCTURAL = 'Structural'
 SLICENUMBER = 'slicenumber'
 
+DESCRIPTION_T1 = 'Description_T1'
+DESCRIPTION_T2 = 'Description_T2'
+
 SLICE1 = 'slice1'
 SLICE2 = 'slice2'
 SLICE3 = 'slice3'
@@ -64,10 +68,10 @@ QUARTILES = [Q1, Q2, Q3, Q4]
 T1 = 't1'
 T2 = 't2'
 
-T1_OPTIONS = {BEGIANT: ['t1_se_cor'],
+T1_OPTIONS = {BEGIANT: ['t1_tse_cor_p2_384_3mm', 'III_t1_tse_cor_512', 't1_se_cor', 'T1_CORONAAL_SIG', 'cor tse t1', 't1_tse_cor_p2_384', 't1_tse_cor_512'],
               HEALTHY_CONTROLS: ['cor tse t1'],
               POPAS: ['t1_se_cor']}
-T2_OPTIONS = {BEGIANT: ['t2_tirm_cor_320_3mm_pat2'],
+T2_OPTIONS = {BEGIANT: ['t2_tse_stir_cor_p2_256', 'III_t2_STIR_cor_pat2', 't2_tirm_cor_320_3mm_pat2', 'T2_TIRM_CORONAAL_SIG', 't2_tse_stir_cor_p2'],
               HEALTHY_CONTROLS: ['t2_tse_stir_cor_p2'],
               POPAS: ['t2_tirm_cor_320_3mm_pat2']}
 

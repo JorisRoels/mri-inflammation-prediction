@@ -15,3 +15,5 @@ tifffile
 scipy
 elasticdeform
 scikit-image
+pandas
+pydicom
